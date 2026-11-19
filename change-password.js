@@ -5,7 +5,7 @@ const args = process.argv.slice(2);
 
 if (args.length < 2) {
   console.log('Usage: node change-password.js <username> <new_password>');
-  console.log('Example: node change-password.js admin newpassword123');
+  console.log('Example: node change-password.js madhuri newpassword123');
   process.exit(1);
 }
 
@@ -16,15 +16,21 @@ if (newPassword.length < 6) {
   process.exit(1);
 }
 
-const admin = db.prepare('SELECT * FROM admins WHERE username = ?').get(username);
-if (!admin) {
-  console.error(`Error: User "${username}" not found.`);
-  process.exit(1);
+async function run() {
+  const admin = await db.admins.findByUsername(username.trim());
+  if (!admin) {
+    console.error(`Error: User "${username}" not found.`);
+    process.exit(1);
+  }
+
+  const salt = bcrypt.genSaltSync(10);
+  const hash = bcrypt.hashSync(newPassword, salt);
+
+  await db.admins.updatePassword(username.trim(), hash);
+  console.log(`Success: Password for user "${username}" has been updated successfully!`);
 }
 
-const salt = bcrypt.genSaltSync(10);
-const hash = bcrypt.hashSync(newPassword, salt);
-
-db.prepare('UPDATE admins SET password_hash = ? WHERE username = ?').run(hash, username);
-console.log(`Success: Password for user "${username}" has been updated successfully!`);
-
+run().catch((err) => {
+  console.error('Failed to change password:', err);
+  process.exit(1);
+});

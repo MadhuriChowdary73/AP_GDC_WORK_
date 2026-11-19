@@ -4,24 +4,11 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const db = require('../db');
+const storageService = require('../services/storage');
 const { authMiddleware } = require('../middleware/auth');
 
-const uploadsDir = path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// Multer storage with safe unique filename
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const timestamp = Date.now();
-    const randomSuffix = Math.random().toString(36).substring(2, 9);
-    cb(null, `doc_${timestamp}_${randomSuffix}.pdf`);
-  }
-});
+// Multer in-memory storage (processes buffer before uploading to Supabase or disk)
+const storage = multer.memoryStorage();
 
 // PDF file filter - validates MIME type and extension
 const fileFilter = (req, file, cb) => {
@@ -45,15 +32,18 @@ const upload = multer({
 
 // Helper to sanitize title for filename in Content-Disposition
 function sanitizeFilename(title) {
-  // Replace illegal filename characters with underscores
   const clean = title.replace(/[/\\?%*:|"<>]/g, '_').trim();
   return clean || 'document';
 }
 
-// Helper to verify PDF magic bytes (%PDF)
-function verifyPdfMagicBytes(filePath) {
+// Helper to verify PDF magic bytes (%PDF) from buffer or file
+function verifyPdfMagicBytes(bufferOrPath) {
   try {
-    const fd = fs.openSync(filePath, 'r');
+    if (Buffer.isBuffer(bufferOrPath)) {
+      if (bufferOrPath.length < 4) return false;
+      return bufferOrPath.slice(0, 4).toString('utf8') === '%PDF';
+    }
+    const fd = fs.openSync(bufferOrPath, 'r');
     const buffer = Buffer.alloc(4);
     fs.readSync(fd, buffer, 0, 4, 0);
     fs.closeSync(fd);
@@ -64,45 +54,10 @@ function verifyPdfMagicBytes(filePath) {
 }
 
 // GET /api/documents - Public listing with filters (section, subsection, search)
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { section_id, subsection_id, search } = req.query;
-
-    let query = `
-      SELECT 
-        d.id,
-        d.title,
-        d.description,
-        d.file_size,
-        d.uploaded_at,
-        sub.id AS subsection_id,
-        sub.name AS subsection_name,
-        s.id AS section_id,
-        s.name AS section_name
-      FROM documents d
-      JOIN subsections sub ON d.subsection_id = sub.id
-      JOIN sections s ON sub.section_id = s.id
-      WHERE 1=1
-    `;
-    const params = [];
-
-    if (subsection_id && subsection_id !== 'all' && subsection_id !== '') {
-      query += ' AND d.subsection_id = ?';
-      params.push(subsection_id);
-    } else if (section_id && section_id !== 'all' && section_id !== '') {
-      query += ' AND sub.section_id = ?';
-      params.push(section_id);
-    }
-
-    if (search && search.trim()) {
-      const term = `%${search.trim().toLowerCase()}%`;
-      query += ' AND (LOWER(d.title) LIKE ? OR LOWER(d.description) LIKE ?)';
-      params.push(term, term);
-    }
-
-    query += ' ORDER BY d.uploaded_at DESC, d.id DESC';
-
-    const documents = db.prepare(query).all(...params);
+    const documents = await db.documents.getAll({ section_id, subsection_id, search });
     res.json(documents);
   } catch (err) {
     console.error('Error fetching documents:', err);
@@ -111,29 +66,12 @@ router.get('/', (req, res) => {
 });
 
 // GET /api/documents/:id - Single document details
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const document = db.prepare(`
-      SELECT 
-        d.id,
-        d.title,
-        d.description,
-        d.file_size,
-        d.uploaded_at,
-        sub.id AS subsection_id,
-        sub.name AS subsection_name,
-        s.id AS section_id,
-        s.name AS section_name
-      FROM documents d
-      JOIN subsections sub ON d.subsection_id = sub.id
-      JOIN sections s ON sub.section_id = s.id
-      WHERE d.id = ?
-    `).get(req.params.id);
-
+    const document = await db.documents.getById(req.params.id);
     if (!document) {
       return res.status(404).json({ error: 'Document not found' });
     }
-
     res.json(document);
   } catch (err) {
     res.status(500).json({ error: 'Failed to retrieve document details' });
@@ -141,16 +79,11 @@ router.get('/:id', (req, res) => {
 });
 
 // GET /api/documents/:id/download - Download PDF with admin-given title
-router.get('/:id/download', (req, res) => {
+router.get('/:id/download', async (req, res) => {
   try {
-    const doc = db.prepare('SELECT id, title, file_path FROM documents WHERE id = ?').get(req.params.id);
+    const doc = await db.documents.getById(req.params.id);
     if (!doc) {
       return res.status(404).json({ error: 'Document not found' });
-    }
-
-    const fullPath = path.isAbsolute(doc.file_path) ? doc.file_path : path.join(__dirname, '..', doc.file_path);
-    if (!fs.existsSync(fullPath)) {
-      return res.status(404).json({ error: 'File on disk could not be located' });
     }
 
     const safeFilename = `${sanitizeFilename(doc.title)}.pdf`;
@@ -158,6 +91,22 @@ router.get('/:id/download', (req, res) => {
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
+
+    // If remote URL (Supabase Storage)
+    if (doc.file_path.startsWith('http://') || doc.file_path.startsWith('https://')) {
+      const response = await fetch(doc.file_path);
+      if (!response.ok) {
+        return res.status(502).json({ error: 'Failed to retrieve file from remote storage' });
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      return res.send(Buffer.from(arrayBuffer));
+    }
+
+    // Local file fallback
+    const fullPath = path.isAbsolute(doc.file_path) ? doc.file_path : path.join(__dirname, '..', doc.file_path);
+    if (!fs.existsSync(fullPath)) {
+      return res.status(404).json({ error: 'File on disk could not be located' });
+    }
 
     const fileStream = fs.createReadStream(fullPath);
     fileStream.pipe(res);
@@ -168,13 +117,19 @@ router.get('/:id/download', (req, res) => {
 });
 
 // GET /api/documents/:id/view - Inline view / preview PDF in browser
-router.get('/:id/view', (req, res) => {
+router.get('/:id/view', async (req, res) => {
   try {
-    const doc = db.prepare('SELECT id, title, file_path FROM documents WHERE id = ?').get(req.params.id);
+    const doc = await db.documents.getById(req.params.id);
     if (!doc) {
       return res.status(404).json({ error: 'Document not found' });
     }
 
+    // If remote URL (Supabase Storage), redirect to public URL for fast in-browser preview
+    if (doc.file_path.startsWith('http://') || doc.file_path.startsWith('https://')) {
+      return res.redirect(doc.file_path);
+    }
+
+    // Local file fallback
     const fullPath = path.isAbsolute(doc.file_path) ? doc.file_path : path.join(__dirname, '..', doc.file_path);
     if (!fs.existsSync(fullPath)) {
       return res.status(404).json({ error: 'File on disk could not be located' });
@@ -194,7 +149,7 @@ router.get('/:id/view', (req, res) => {
 
 // POST /api/documents - Admin Upload document
 router.post('/', authMiddleware, (req, res) => {
-  upload.single('pdf')(req, res, (err) => {
+  upload.single('pdf')(req, res, async (err) => {
     if (err instanceof multer.MulterError) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({ error: 'File size exceeds maximum limit of 10 MB' });
@@ -211,67 +166,48 @@ router.post('/', authMiddleware, (req, res) => {
     const { title, description, subsection_id } = req.body;
 
     if (!title || !title.trim()) {
-      // Clean up uploaded file
-      fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: 'Document title is required' });
     }
 
     if (!subsection_id) {
-      fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: 'Subsection is required' });
     }
 
-    // Verify subsection exists
-    const sub = db.prepare('SELECT id FROM subsections WHERE id = ?').get(subsection_id);
-    if (!sub) {
-      fs.unlinkSync(req.file.path);
-      return res.status(400).json({ error: 'Selected subsection does not exist' });
-    }
-
-    // Check magic bytes
-    if (!verifyPdfMagicBytes(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-      return res.status(400).json({ error: 'Corrupt or invalid PDF file format' });
-    }
-
-    const relativePath = path.relative(path.join(__dirname, '..'), req.file.path);
-    const fileSize = req.file.size;
-
     try {
-      const result = db.prepare(`
-        INSERT INTO documents (title, description, subsection_id, file_path, file_size)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(title.trim(), (description || '').trim(), subsection_id, relativePath, fileSize);
+      // Verify subsection exists
+      const sub = await db.subsections.getById(subsection_id);
+      if (!sub) {
+        return res.status(400).json({ error: 'Selected subsection does not exist' });
+      }
 
-      const created = db.prepare(`
-        SELECT 
-          d.id,
-          d.title,
-          d.description,
-          d.file_size,
-          d.uploaded_at,
-          sub.id AS subsection_id,
-          sub.name AS subsection_name,
-          s.id AS section_id,
-          s.name AS section_name
-        FROM documents d
-        JOIN subsections sub ON d.subsection_id = sub.id
-        JOIN sections s ON sub.section_id = s.id
-        WHERE d.id = ?
-      `).get(result.lastInsertRowid);
+      // Check magic bytes
+      if (!verifyPdfMagicBytes(req.file.buffer)) {
+        return res.status(400).json({ error: 'Corrupt or invalid PDF file format' });
+      }
+
+      // Upload file to storage (Supabase Storage or local disk fallback)
+      const uploadResult = await storageService.uploadPdf(req.file.buffer, req.file.originalname);
+
+      // Save metadata and file path/URL to database
+      const created = await db.documents.create({
+        title: title.trim(),
+        description: (description || '').trim(),
+        subsection_id,
+        file_path: uploadResult.filePath,
+        file_size: uploadResult.fileSize
+      });
 
       return res.status(201).json(created);
     } catch (insertErr) {
-      console.error('Error saving document to database:', insertErr);
-      fs.unlinkSync(req.file.path);
-      return res.status(500).json({ error: 'Database error while saving document' });
+      console.error('Error saving document:', insertErr);
+      return res.status(500).json({ error: insertErr.message || 'Database error while saving document' });
     }
   });
 });
 
 // PUT /api/documents/:id - Admin Edit document (can also replace file optionally)
 router.put('/:id', authMiddleware, (req, res) => {
-  upload.single('pdf')(req, res, (err) => {
+  upload.single('pdf')(req, res, async (err) => {
     if (err instanceof multer.MulterError) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({ error: 'File size exceeds maximum limit of 10 MB' });
@@ -282,104 +218,76 @@ router.put('/:id', authMiddleware, (req, res) => {
     }
 
     const docId = req.params.id;
-    const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId);
-    if (!existing) {
-      if (req.file) fs.unlinkSync(req.file.path);
-      return res.status(404).json({ error: 'Document not found' });
-    }
-
-    const { title, description, subsection_id } = req.body;
-
-    const newTitle = title ? title.trim() : existing.title;
-    const newDesc = description !== undefined ? description.trim() : existing.description;
-    const newSubId = subsection_id ? parseInt(subsection_id, 10) : existing.subsection_id;
-
-    if (!newTitle) {
-      if (req.file) fs.unlinkSync(req.file.path);
-      return res.status(400).json({ error: 'Document title cannot be empty' });
-    }
-
-    const sub = db.prepare('SELECT id FROM subsections WHERE id = ?').get(newSubId);
-    if (!sub) {
-      if (req.file) fs.unlinkSync(req.file.path);
-      return res.status(400).json({ error: 'Selected subsection does not exist' });
-    }
-
-    let filePath = existing.file_path;
-    let fileSize = existing.file_size;
-
-    if (req.file) {
-      if (!verifyPdfMagicBytes(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-        return res.status(400).json({ error: 'Corrupt or invalid PDF file format' });
-      }
-
-      // Delete old file
-      try {
-        const oldFullPath = path.isAbsolute(existing.file_path) ? existing.file_path : path.join(__dirname, '..', existing.file_path);
-        if (fs.existsSync(oldFullPath)) {
-          fs.unlinkSync(oldFullPath);
-        }
-      } catch (fErr) {
-        console.warn('Could not remove old file during replacement:', existing.file_path);
-      }
-
-      filePath = path.relative(path.join(__dirname, '..'), req.file.path);
-      fileSize = req.file.size;
-    }
 
     try {
-      db.prepare(`
-        UPDATE documents 
-        SET title = ?, description = ?, subsection_id = ?, file_path = ?, file_size = ?
-        WHERE id = ?
-      `).run(newTitle, newDesc, newSubId, filePath, fileSize, docId);
+      const existing = await db.documents.getById(docId);
+      if (!existing) {
+        return res.status(404).json({ error: 'Document not found' });
+      }
 
-      const updated = db.prepare(`
-        SELECT 
-          d.id,
-          d.title,
-          d.description,
-          d.file_size,
-          d.uploaded_at,
-          sub.id AS subsection_id,
-          sub.name AS subsection_name,
-          s.id AS section_id,
-          s.name AS section_name
-        FROM documents d
-        JOIN subsections sub ON d.subsection_id = sub.id
-        JOIN sections s ON sub.section_id = s.id
-        WHERE d.id = ?
-      `).get(docId);
+      const { title, description, subsection_id } = req.body;
+
+      const newTitle = title ? title.trim() : existing.title;
+      const newDesc = description !== undefined ? description.trim() : existing.description;
+      const newSubId = subsection_id ? parseInt(subsection_id, 10) : existing.subsection_id;
+
+      if (!newTitle) {
+        return res.status(400).json({ error: 'Document title cannot be empty' });
+      }
+
+      const sub = await db.subsections.getById(newSubId);
+      if (!sub) {
+        return res.status(400).json({ error: 'Selected subsection does not exist' });
+      }
+
+      let filePath = existing.file_path;
+      let fileSize = existing.file_size;
+
+      if (req.file) {
+        if (!verifyPdfMagicBytes(req.file.buffer)) {
+          return res.status(400).json({ error: 'Corrupt or invalid PDF file format' });
+        }
+
+        // Upload new file to storage
+        const uploadResult = await storageService.uploadPdf(req.file.buffer, req.file.originalname);
+
+        // Delete old file from storage
+        await storageService.deletePdf(existing.file_path);
+
+        filePath = uploadResult.filePath;
+        fileSize = uploadResult.fileSize;
+      }
+
+      const updated = await db.documents.update(docId, {
+        title: newTitle,
+        description: newDesc,
+        subsection_id: newSubId,
+        file_path: filePath,
+        file_size: fileSize
+      });
 
       return res.json(updated);
     } catch (updateErr) {
       console.error('Error updating document:', updateErr);
-      return res.status(500).json({ error: 'Database error while updating document' });
+      return res.status(500).json({ error: updateErr.message || 'Database error while updating document' });
     }
   });
 });
 
 // DELETE /api/documents/:id - Admin Delete document
-router.delete('/:id', authMiddleware, (req, res) => {
+router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const docId = req.params.id;
-    const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(docId);
+    const doc = await db.documents.getById(docId);
     if (!doc) {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    // Remove file from disk
-    try {
-      const fullPath = path.isAbsolute(doc.file_path) ? doc.file_path : path.join(__dirname, '..', doc.file_path);
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-      }
-    } catch (fErr) {
-      console.warn('Could not remove file on document deletion:', doc.file_path);
-    }
+    // Remove file from storage
+    await storageService.deletePdf(doc.file_path);
 
-    db.prepare('DELETE FROM documents WHERE id = ?').run(docId);
+    // Delete document record
+    await db.documents.delete(docId);
     res.json({ message: `Document "${doc.title}" deleted successfully` });
   } catch (err) {
     console.error('Error deleting document:', err);
@@ -388,4 +296,3 @@ router.delete('/:id', authMiddleware, (req, res) => {
 });
 
 module.exports = router;
-
