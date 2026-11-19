@@ -18,45 +18,50 @@ const loginLimiter = rateLimit({
 });
 
 // POST /api/auth/login
-router.post('/login', loginLimiter, (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required' });
   }
 
-  const admin = db.prepare('SELECT * FROM admins WHERE username = ?').get(username.trim());
-  if (!admin) {
-    return res.status(401).json({ error: 'Invalid username or password' });
-  }
-
-  const isMatch = bcrypt.compareSync(password, admin.password_hash);
-  if (!isMatch) {
-    return res.status(401).json({ error: 'Invalid username or password' });
-  }
-
-  const token = jwt.sign(
-    { id: admin.id, username: admin.username },
-    JWT_SECRET,
-    { expiresIn: '24h' }
-  );
-
-  // Set httpOnly cookie
-  res.cookie('token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 24 * 60 * 60 * 1000
-  });
-
-  return res.json({
-    message: 'Login successful',
-    token,
-    user: {
-      id: admin.id,
-      username: admin.username
+  try {
+    const admin = await db.admins.findByUsername(username.trim());
+    if (!admin) {
+      return res.status(401).json({ error: 'Invalid username or password' });
     }
-  });
+
+    const isMatch = bcrypt.compareSync(password, admin.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const token = jwt.sign(
+      { id: admin.id, username: admin.username },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    // Set httpOnly cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 24 * 60 * 60 * 1000
+    });
+
+    return res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: admin.id,
+        username: admin.username
+      }
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    return res.status(500).json({ error: 'Internal server error during login' });
+  }
 });
 
 // POST /api/auth/logout
@@ -71,7 +76,7 @@ router.get('/me', authMiddleware, (req, res) => {
 });
 
 // PUT /api/auth/change-password
-router.put('/change-password', authMiddleware, (req, res) => {
+router.put('/change-password', authMiddleware, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
 
   if (!currentPassword || !newPassword) {
@@ -82,21 +87,26 @@ router.put('/change-password', authMiddleware, (req, res) => {
     return res.status(400).json({ error: 'New password must be at least 6 characters long' });
   }
 
-  const admin = db.prepare('SELECT * FROM admins WHERE id = ?').get(req.user.id);
-  if (!admin) {
-    return res.status(404).json({ error: 'Admin account not found' });
+  try {
+    const admin = await db.admins.findById(req.user.id);
+    if (!admin) {
+      return res.status(404).json({ error: 'Admin account not found' });
+    }
+
+    const isMatch = bcrypt.compareSync(currentPassword, admin.password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    const salt = bcrypt.genSaltSync(10);
+    const hash = bcrypt.hashSync(newPassword, salt);
+    await db.admins.updatePassword(admin.username, hash);
+
+    return res.json({ message: 'Password updated successfully' });
+  } catch (err) {
+    console.error('Change password error:', err);
+    return res.status(500).json({ error: 'Failed to update password' });
   }
-
-  const isMatch = bcrypt.compareSync(currentPassword, admin.password_hash);
-  if (!isMatch) {
-    return res.status(400).json({ error: 'Current password is incorrect' });
-  }
-
-  const salt = bcrypt.genSaltSync(10);
-  const hash = bcrypt.hashSync(newPassword, salt);
-  db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(hash, req.user.id);
-
-  return res.json({ message: 'Password updated successfully' });
 });
 
 module.exports = router;

@@ -8,12 +8,10 @@ const seed = require('./seed');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Ensure database and initial data exist
-try {
-  seed();
-} catch (err) {
+// Ensure database and initial data exist (non-blocking async)
+seed().catch((err) => {
   console.error('Error during database check/seeding:', err);
-}
+});
 
 // Middleware
 app.use(cors({
