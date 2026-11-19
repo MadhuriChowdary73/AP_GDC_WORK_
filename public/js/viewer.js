@@ -512,7 +512,7 @@ const Viewer = {
           ${doc.description ? this.highlightMatch(this.escapeHtml(doc.description), this.tableSearchQuery) : '<span style="color: #94a3b8; font-style: italic;">No description provided.</span>'}
         </td>
         <td class="cell-action col-preview">
-          <button class="btn btn-outline btn-preview-doc" data-id="${doc.id}" title="Preview ${this.escapeHtml(doc.title)}" aria-label="Preview ${this.escapeHtml(doc.title)}">
+          <button class="btn-action-icon btn-preview-doc" data-id="${doc.id}" title="Preview" aria-label="Preview">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
               <circle cx="12" cy="12" r="3"/>
@@ -520,13 +520,12 @@ const Viewer = {
           </button>
         </td>
         <td class="cell-action col-download">
-          <a href="${downloadUrl}" class="btn btn-primary btn-download-doc" download title="Download ${this.escapeHtml(doc.title)}">
-            <svg class="download-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <a href="${downloadUrl}" class="btn-action-icon btn-download-doc" download title="Download" aria-label="Download">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
               <polyline points="7 10 12 15 17 10"/>
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
-            <span>Download</span>
           </a>
         </td>
       `;
