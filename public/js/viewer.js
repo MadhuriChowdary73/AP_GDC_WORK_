@@ -14,64 +14,131 @@ const Viewer = {
   subsectionsCache: new Map(), // sectionId -> array of subsections
   activeSection: null,
   activeSubsection: null,
-  activePanel: null,           // 'main' or 'bills'
+  activePanel: 'sections',     // 'sections' | 'bills' (mutually exclusive active panel)
+  activeDocumentPanel: null,   // 'main' or 'bills' (source panel for active documents)
   currentDocuments: [],
   tableSearchQuery: '',
 
   async init() {
+    this.setupPanelToggle();
     this.setupMobileDrawers();
     this.setupTableSearch();
     this.showPlaceholder();
     await this.loadSidebarSections();
   },
 
-  setupMobileDrawers() {
-    // Left Drawer (Sections)
-    const toggleLeftBtn = document.getElementById('mobile-sidebar-toggle');
-    const closeLeftBtn = document.getElementById('mobile-sidebar-close');
+  setActivePanel(panel) {
+    const target = (panel === 'bills') ? 'bills' : 'sections';
+    this.activePanel = target;
+    this.applyPanelState();
+  },
+
+  applyPanelState() {
+    const leftEl = document.getElementById('viewer-sidebar-left');
+    const rightEl = document.getElementById('viewer-sidebar-right');
+    const leftRailBtn = document.getElementById('panel-rail-sections');
+    const rightRailBtn = document.getElementById('panel-rail-bills');
+    const layout = document.querySelector('.viewer-layout');
+
+    if (layout) {
+      layout.setAttribute('data-active-panel', this.activePanel);
+    }
+
+    const isSections = (this.activePanel === 'sections');
+
+    if (leftEl) {
+      leftEl.classList.toggle('panel-expanded', isSections);
+      leftEl.classList.toggle('panel-collapsed', !isSections);
+      leftEl.setAttribute('aria-expanded', isSections ? 'true' : 'false');
+    }
+    if (leftRailBtn) {
+      leftRailBtn.setAttribute('aria-expanded', isSections ? 'true' : 'false');
+    }
+
+    if (rightEl) {
+      rightEl.classList.toggle('panel-expanded', !isSections);
+      rightEl.classList.toggle('panel-collapsed', isSections);
+      rightEl.setAttribute('aria-expanded', !isSections ? 'true' : 'false');
+    }
+    if (rightRailBtn) {
+      rightRailBtn.setAttribute('aria-expanded', !isSections ? 'true' : 'false');
+    }
+  },
+
+  setupPanelToggle() {
+    const leftRailBtn = document.getElementById('panel-rail-sections');
+    const rightRailBtn = document.getElementById('panel-rail-bills');
     const leftSidebar = document.getElementById('viewer-sidebar-left');
-    const leftBackdrop = document.getElementById('sidebar-backdrop');
-
-    // Right Drawer (Bills)
-    const toggleRightBtn = document.getElementById('mobile-bills-toggle');
-    const closeRightBtn = document.getElementById('mobile-bills-close');
     const rightSidebar = document.getElementById('viewer-sidebar-right');
-    const rightBackdrop = document.getElementById('bills-backdrop');
 
-    const openLeft = () => {
-      if (leftSidebar) leftSidebar.classList.add('sidebar-open');
-      if (leftBackdrop) leftBackdrop.classList.add('active');
-      closeRight();
-    };
+    if (leftRailBtn) {
+      leftRailBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setActivePanel('sections');
+      });
+      leftRailBtn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          this.setActivePanel('sections');
+        }
+      });
+    }
 
-    const closeLeft = () => {
-      if (leftSidebar) leftSidebar.classList.remove('sidebar-open');
-      if (leftBackdrop) leftBackdrop.classList.remove('active');
-    };
+    if (rightRailBtn) {
+      rightRailBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setActivePanel('bills');
+      });
+      rightRailBtn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          this.setActivePanel('bills');
+        }
+      });
+    }
 
-    const openRight = () => {
-      if (rightSidebar) rightSidebar.classList.add('bills-open');
-      if (rightBackdrop) rightBackdrop.classList.add('active');
-      closeLeft();
-    };
+    // Clicking anywhere on a collapsed sidebar expands it
+    if (leftSidebar) {
+      leftSidebar.addEventListener('click', () => {
+        if (this.activePanel !== 'sections') {
+          this.setActivePanel('sections');
+        }
+      });
+    }
 
-    const closeRight = () => {
-      if (rightSidebar) rightSidebar.classList.remove('bills-open');
-      if (rightBackdrop) rightBackdrop.classList.remove('active');
-    };
+    if (rightSidebar) {
+      rightSidebar.addEventListener('click', () => {
+        if (this.activePanel !== 'bills') {
+          this.setActivePanel('bills');
+        }
+      });
+    }
 
-    if (toggleLeftBtn) toggleLeftBtn.addEventListener('click', openLeft);
-    if (closeLeftBtn) closeLeftBtn.addEventListener('click', closeLeft);
-    if (leftBackdrop) leftBackdrop.addEventListener('click', closeLeft);
+    // Mobile header buttons also toggle the panel
+    const toggleLeftBtn = document.getElementById('mobile-sidebar-toggle');
+    const toggleRightBtn = document.getElementById('mobile-bills-toggle');
+    if (toggleLeftBtn) {
+      toggleLeftBtn.addEventListener('click', () => {
+        this.setActivePanel('sections');
+        if (window.innerWidth <= 768 && leftSidebar) {
+          leftSidebar.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    }
+    if (toggleRightBtn) {
+      toggleRightBtn.addEventListener('click', () => {
+        this.setActivePanel('bills');
+        if (window.innerWidth <= 768 && rightSidebar) {
+          rightSidebar.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    }
 
-    if (toggleRightBtn) toggleRightBtn.addEventListener('click', openRight);
-    if (closeRightBtn) closeRightBtn.addEventListener('click', closeRight);
-    if (rightBackdrop) rightBackdrop.addEventListener('click', closeRight);
+    this.applyPanelState();
+  },
 
-    this.closeAllDrawers = () => {
-      closeLeft();
-      closeRight();
-    };
+  setupMobileDrawers() {
+    this.closeAllDrawers = () => {};
   },
 
   setupTableSearch() {
@@ -181,6 +248,7 @@ const Viewer = {
   },
 
   async handleSectionHeaderClick(section, headerBtn, subContainer, panel) {
+    this.setActivePanel(panel === 'bills' ? 'bills' : 'sections');
     const isExpanded = headerBtn.classList.contains('expanded');
 
     // Fetch subsections if not cached
@@ -302,7 +370,8 @@ const Viewer = {
   async selectSubsection(section, subsection, panel) {
     this.activeSection = section;
     this.activeSubsection = subsection;
-    this.activePanel = panel;
+    this.activeDocumentPanel = panel;
+    this.setActivePanel(panel === 'bills' ? 'bills' : 'sections');
 
     // Remove active highlight across ALL panels (Sections and Bills)
     document.querySelectorAll('.subsection-item-btn').forEach(btn => {

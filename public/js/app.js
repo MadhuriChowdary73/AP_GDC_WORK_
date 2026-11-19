@@ -29,6 +29,7 @@ const App = {
         e.preventDefault();
         this.switchTab('viewer');
         if (window.Viewer) {
+          Viewer.setActivePanel('sections');
           Viewer.showPlaceholder();
           Viewer.collapseAllSectionsExcept(null);
         }
