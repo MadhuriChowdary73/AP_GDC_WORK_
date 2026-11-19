@@ -883,94 +883,6 @@ body {
   .mobile-sidebar-toggle {
     display: inline-flex;
   }
-
-  /* Mobile Stacked Card Layout for Documents Table (<768px) */
-  .excel-table-container {
-    overflow-x: hidden !important;
-    max-height: none;
-    border: none;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .excel-table {
-    display: block;
-    width: 100% !important;
-    table-layout: auto;
-  }
-
-  .excel-table thead {
-    display: none;
-  }
-
-  .excel-table tbody {
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-    width: 100%;
-  }
-
-  .excel-table tbody tr {
-    display: grid;
-    grid-template-columns: 1fr auto auto;
-    grid-template-areas:
-      "title title title"
-      "desc desc desc"
-      ". preview download";
-    align-items: center;
-    gap: 0.65rem;
-    padding: 1rem 1.15rem;
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    background: #ffffff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    box-sizing: border-box;
-    width: 100% !important;
-  }
-
-  .excel-table tbody tr:hover {
-    background-color: #ffffff;
-    border-color: #93c5fd;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
-  }
-
-  .excel-table td.cell-sno {
-    display: none;
-  }
-
-  .excel-table td.col-title {
-    grid-area: title;
-    border: none;
-    padding: 0;
-    width: 100% !important;
-    max-width: none;
-  }
-
-  .excel-table td.col-desc {
-    grid-area: desc;
-    border: none;
-    padding: 0;
-    width: 100% !important;
-    font-size: 0.88rem;
-    line-height: 1.5;
-    color: #475569;
-  }
-
-  .excel-table td.col-preview {
-    grid-area: preview;
-    border: none;
-    padding: 0;
-    width: auto !important;
-    justify-self: end;
-  }
-
-  .excel-table td.col-download {
-    grid-area: download;
-    border: none;
-    padding: 0;
-    width: auto !important;
-    justify-self: end;
-  }
 }
 
 @media (max-width: 650px) {
@@ -1368,32 +1280,32 @@ body {
 
 .excel-table-container {
   width: 100%;
-  overflow-x: hidden;
+  overflow-x: auto;
   border: 1px solid #cbd5e1;
   border-radius: var(--radius-md);
   background-color: #ffffff;
   box-shadow: var(--shadow-sm);
   max-height: calc(100vh - 210px);
-  overflow-y: auto;
 }
 
 .excel-table {
   width: 100%;
-  table-layout: fixed;
   border-collapse: collapse;
   text-align: left;
   font-size: 0.95rem;
+  /* ~16px */
 }
 
-/* Table header: bold with visible borders, never cut off */
+/* Table header: ~16px bold with visible borders */
 .excel-table th {
   background-color: #f1f5f9;
   color: #0f172a;
   font-weight: 700;
   text-transform: uppercase;
-  font-size: 0.85rem;
+  font-size: 0.925rem;
+  /* ~16px bold */
   letter-spacing: 0.04em;
-  padding: 0.85rem 0.75rem;
+  padding: 0.95rem 1.15rem;
   border: 1px solid #cbd5e1;
   border-bottom: 2px solid #94a3b8;
   position: sticky;
@@ -1402,12 +1314,13 @@ body {
   white-space: nowrap;
 }
 
-/* Table cells: with neat text wrapping */
+/* Table cells: ~16px with neat text wrapping */
 .excel-table td {
-  padding: 0.85rem 0.75rem;
+  padding: 0.95rem 1.15rem;
   border: 1px solid #e2e8f0;
   vertical-align: top;
   font-size: 0.95rem;
+  /* ~16px */
 }
 
 .excel-table tbody tr:nth-child(even) {
@@ -1419,10 +1332,11 @@ body {
 }
 
 .col-sno {
-  width: 56px;
+  width: 50px;
+  max-width: 55px;
   text-align: center !important;
-  padding-left: 0.35rem !important;
-  padding-right: 0.35rem !important;
+  padding-left: 0.4rem !important;
+  padding-right: 0.4rem !important;
 }
 
 .cell-sno {
@@ -1430,17 +1344,18 @@ body {
   font-weight: 700;
   color: #64748b;
   font-size: 0.95rem;
+  /* ~16px */
 }
 
 .col-title {
-  width: 36%;
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: break-word;
+  width: 28%;
+  min-width: 220px;
+  max-width: 340px;
 }
 
 .doc-cell-title {
   font-size: 1.05rem;
+  /* ~18px bold */
   font-weight: 600;
   color: #0f172a;
   line-height: 1.45;
@@ -1450,6 +1365,7 @@ body {
 
 .doc-cell-meta {
   font-size: 0.825rem;
+  /* ~14px */
   color: #64748b;
   display: flex;
   align-items: center;
@@ -1470,71 +1386,63 @@ body {
 
 .col-desc {
   width: auto;
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: break-word;
+  min-width: 320px;
   line-height: 1.6;
   color: #334155;
   font-size: 0.95rem;
+  /* ~16px */
+  word-break: break-word;
 }
 
 .col-preview {
-  width: 90px;
+  width: 56px;
+  max-width: 62px;
   text-align: center !important;
   white-space: nowrap;
-  padding-left: 0.4rem !important;
-  padding-right: 0.4rem !important;
+  padding-left: 0.25rem !important;
+  padding-right: 0.25rem !important;
 }
 
 .col-download {
-  width: 90px;
+  width: 82px;
+  max-width: 88px;
   text-align: center !important;
   white-space: nowrap;
-  padding-left: 0.4rem !important;
-  padding-right: 0.4rem !important;
+  padding-left: 0.3rem !important;
+  padding-right: 0.3rem !important;
 }
 
 .excel-table th.col-preview,
 .excel-table th.col-download {
-  text-align: center !important;
-  white-space: nowrap;
-  font-size: 0.82rem;
-  letter-spacing: 0.04em;
-  padding: 0.85rem 0.4rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
 }
 
 .cell-action {
   text-align: center;
   white-space: nowrap;
-  vertical-align: middle;
 }
 
-/* Common Action Icon Button Size */
-.btn-action-icon {
+/* Action buttons on single line */
+.cell-action .btn {
+  white-space: nowrap;
+}
+
+/* Eye Preview Icon Button */
+.btn-preview-doc {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   padding: 0 !important;
   border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.18s ease;
-  vertical-align: middle;
-  text-decoration: none;
-  box-sizing: border-box;
-}
-
-.btn-action-icon svg {
-  width: 18px;
-  height: 18px;
-}
-
-/* Eye Preview Icon Button (Outline style) */
-.btn-preview-doc {
   border: 1px solid #bfdbfe;
   background-color: #eff6ff;
   color: #2563eb;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  vertical-align: middle;
 }
 
 .btn-preview-doc:hover {
@@ -1545,19 +1453,36 @@ body {
   transform: translateY(-1px);
 }
 
-/* Download Icon Button (Solid blue style) */
+.btn-preview-doc svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Compact Download Button */
 .btn-download-doc {
-  border: 1px solid #2563eb;
-  background-color: #2563eb;
-  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.22rem 0.45rem !important;
+  font-size: 0.76rem !important;
+  font-weight: 600;
+  border-radius: 5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  vertical-align: middle;
+  transition: all 0.18s ease;
+}
+
+.btn-download-doc .download-icon-svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
 }
 
 .btn-download-doc:hover {
-  background-color: #1d4ed8;
-  border-color: #1d4ed8;
-  color: #ffffff;
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
   transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
 }
 
 /* ==========================================================================

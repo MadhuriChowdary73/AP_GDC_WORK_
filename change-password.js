@@ -16,17 +16,15 @@ if (newPassword.length < 6) {
   process.exit(1);
 }
 
-(async () => {
-  const admin = await db.admins.findByUsername(username);
-  if (!admin) {
-    console.error(`Error: User "${username}" not found.`);
-    process.exit(1);
-  }
+const admin = db.prepare('SELECT * FROM admins WHERE username = ?').get(username);
+if (!admin) {
+  console.error(`Error: User "${username}" not found.`);
+  process.exit(1);
+}
 
-  const salt = bcrypt.genSaltSync(10);
-  const hash = bcrypt.hashSync(newPassword, salt);
+const salt = bcrypt.genSaltSync(10);
+const hash = bcrypt.hashSync(newPassword, salt);
 
-  await db.admins.updatePassword(username, hash);
-  console.log(`Success: Password for user "${username}" has been updated successfully!`);
-})();
+db.prepare('UPDATE admins SET password_hash = ? WHERE username = ?').run(hash, username);
+console.log(`Success: Password for user "${username}" has been updated successfully!`);
 

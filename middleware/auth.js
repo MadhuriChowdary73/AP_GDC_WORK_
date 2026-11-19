@@ -3,7 +3,7 @@ const db = require('../db');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'pdf-library-super-secret-jwt-key-2024';
 
-async function authMiddleware(req, res, next) {
+function authMiddleware(req, res, next) {
   let token = null;
 
   // Check Authorization header
@@ -23,7 +23,7 @@ async function authMiddleware(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    const admin = await db.admins.findById(decoded.id);
+    const admin = db.prepare('SELECT id, username FROM admins WHERE id = ?').get(decoded.id);
     if (!admin) {
       return res.status(401).json({ error: 'Unauthorized: Admin account no longer exists' });
     }
