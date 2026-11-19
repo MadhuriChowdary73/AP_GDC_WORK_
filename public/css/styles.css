@@ -1332,8 +1332,11 @@ body {
 }
 
 .col-sno {
-  width: 60px;
+  width: 50px;
+  max-width: 55px;
   text-align: center !important;
+  padding-left: 0.4rem !important;
+  padding-right: 0.4rem !important;
 }
 
 .cell-sno {
@@ -1345,8 +1348,9 @@ body {
 }
 
 .col-title {
-  min-width: 270px;
-  max-width: 400px;
+  width: 28%;
+  min-width: 220px;
+  max-width: 340px;
 }
 
 .doc-cell-title {
@@ -1381,6 +1385,7 @@ body {
 }
 
 .col-desc {
+  width: auto;
   min-width: 320px;
   line-height: 1.6;
   color: #334155;
@@ -1390,15 +1395,27 @@ body {
 }
 
 .col-preview {
-  width: 76px;
+  width: 56px;
+  max-width: 62px;
   text-align: center !important;
   white-space: nowrap;
+  padding-left: 0.25rem !important;
+  padding-right: 0.25rem !important;
 }
 
 .col-download {
-  width: 108px;
+  width: 82px;
+  max-width: 88px;
   text-align: center !important;
   white-space: nowrap;
+  padding-left: 0.3rem !important;
+  padding-right: 0.3rem !important;
+}
+
+.excel-table th.col-preview,
+.excel-table th.col-download {
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
 }
 
 .cell-action {
@@ -1416,8 +1433,8 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   padding: 0 !important;
   border-radius: 6px;
   border: 1px solid #bfdbfe;
@@ -1437,8 +1454,8 @@ body {
 }
 
 .btn-preview-doc svg {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
 }
 
 /* Compact Download Button */
@@ -1446,11 +1463,11 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
-  padding: 0.3rem 0.65rem !important;
-  font-size: 0.82rem !important;
+  gap: 0.25rem;
+  padding: 0.22rem 0.45rem !important;
+  font-size: 0.76rem !important;
   font-weight: 600;
-  border-radius: 6px;
+  border-radius: 5px;
   line-height: 1.2;
   white-space: nowrap;
   vertical-align: middle;
@@ -1458,8 +1475,8 @@ body {
 }
 
 .btn-download-doc .download-icon-svg {
-  width: 13px;
-  height: 13px;
+  width: 11px;
+  height: 11px;
   flex-shrink: 0;
 }
 
