@@ -1,78 +1,77 @@
 /**
  * Unified Database Layer
  * Automatically uses Supabase Postgres when SUPABASE_URL & SUPABASE_KEY are provided.
- * Gracefully falls back to local SQLite (library.db) when running offline / without credentials.
+ * Nothing is written to the local filesystem when Supabase is configured.
  */
 const path = require('path');
 const fs = require('fs');
-const { DatabaseSync } = require('node:sqlite');
 const { supabase, isConfigured } = require('./supabase');
 
-// Initialize local SQLite fallback
-const dbPath = path.join(__dirname, 'library.db');
-const sqlite = new DatabaseSync(dbPath);
+// Lazy SQLite initialization for offline testing only
+let sqliteInstance = null;
+function getSqlite() {
+  if (!sqliteInstance) {
+    const { DatabaseSync } = require('node:sqlite');
+    const dbPath = path.join(__dirname, 'library.db');
+    sqliteInstance = new DatabaseSync(dbPath);
+    sqliteInstance.exec('PRAGMA foreign_keys = ON;');
+    sqliteInstance.exec('PRAGMA journal_mode = WAL;');
 
-sqlite.exec('PRAGMA foreign_keys = ON;');
-sqlite.exec('PRAGMA journal_mode = WAL;');
+    sqliteInstance.exec(`
+      CREATE TABLE IF NOT EXISTS admins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
 
-// Initialize tables in SQLite if they don't exist
-sqlite.exec(`
-  CREATE TABLE IF NOT EXISTS admins (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+      CREATE TABLE IF NOT EXISTS sections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        panel TEXT DEFAULT 'main' NOT NULL
+      );
 
-  CREATE TABLE IF NOT EXISTS sections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    panel TEXT DEFAULT 'main' NOT NULL
-  );
+      CREATE TABLE IF NOT EXISTS subsections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        section_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        UNIQUE(section_id, name),
+        FOREIGN KEY(section_id) REFERENCES sections(id) ON DELETE CASCADE
+      );
 
-  CREATE TABLE IF NOT EXISTS subsections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    section_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    UNIQUE(section_id, name),
-    FOREIGN KEY(section_id) REFERENCES sections(id) ON DELETE CASCADE
-  );
+      CREATE TABLE IF NOT EXISTS documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT,
+        section TEXT DEFAULT '',
+        subsection TEXT DEFAULT '',
+        section_id INTEGER,
+        subsection_id INTEGER,
+        file_url TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_size INTEGER DEFAULT 0,
+        uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
-  CREATE TABLE IF NOT EXISTS documents (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT,
-    subsection_id INTEGER NOT NULL,
-    file_path TEXT NOT NULL,
-    file_size INTEGER DEFAULT 0,
-    uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(subsection_id) REFERENCES subsections(id) ON DELETE CASCADE
-  );
-`);
-
-// Safe migration for SQLite
-try {
-  const columns = sqlite.prepare('PRAGMA table_info(sections)').all();
-  const hasPanelCol = columns.some(c => c.name === 'panel');
-  if (!hasPanelCol) {
-    sqlite.exec(`ALTER TABLE sections ADD COLUMN panel TEXT DEFAULT 'main';`);
-    sqlite.exec(`UPDATE sections SET panel = 'main' WHERE panel IS NULL OR panel = '';`);
+    try { sqliteInstance.exec("ALTER TABLE documents ADD COLUMN section TEXT DEFAULT ''"); } catch (_) {}
+    try { sqliteInstance.exec("ALTER TABLE documents ADD COLUMN subsection TEXT DEFAULT ''"); } catch (_) {}
+    try { sqliteInstance.exec("ALTER TABLE documents ADD COLUMN section_id INTEGER"); } catch (_) {}
+    try { sqliteInstance.exec("ALTER TABLE documents ADD COLUMN file_url TEXT"); } catch (_) {}
+    try { sqliteInstance.exec("UPDATE documents SET file_url = file_path WHERE file_url IS NULL"); } catch (_) {}
   }
-} catch (migErr) {
-  console.warn('[SQLite] Migration note for sections:', migErr.message);
+  return sqliteInstance;
 }
 
 // Unified Database Adapter
 const db = {
   isSupabase: isConfigured && Boolean(supabase),
-  sqlite,
 
-  // Direct prepare method for SQLite backward compatibility
   prepare(sql) {
-    return sqlite.prepare(sql);
+    return getSqlite().prepare(sql);
   },
   exec(sql) {
-    return sqlite.exec(sql);
+    return getSqlite().exec(sql);
   },
 
   // --- ADMINS ---
@@ -82,12 +81,12 @@ const db = {
         const { data, error } = await supabase
           .from('admins')
           .select('*')
-          .eq('username', username.trim())
+          .ilike('username', username.trim())
           .maybeSingle();
         if (error) throw new Error(error.message);
         return data;
       }
-      return sqlite.prepare('SELECT * FROM admins WHERE username = ?').get(username.trim());
+      return getSqlite().prepare('SELECT * FROM admins WHERE LOWER(username) = LOWER(?)').get(username.trim());
     },
 
     async findById(id) {
@@ -100,7 +99,7 @@ const db = {
         if (error) throw new Error(error.message);
         return data;
       }
-      return sqlite.prepare('SELECT * FROM admins WHERE id = ?').get(id);
+      return getSqlite().prepare('SELECT * FROM admins WHERE id = ?').get(id);
     },
 
     async create({ username, password_hash }) {
@@ -113,7 +112,7 @@ const db = {
         if (error) throw new Error(error.message);
         return data;
       }
-      const res = sqlite.prepare('INSERT INTO admins (username, password_hash) VALUES (?, ?)').run(username.trim(), password_hash);
+      const res = getSqlite().prepare('INSERT INTO admins (username, password_hash) VALUES (?, ?)').run(username.trim(), password_hash);
       return { id: res.lastInsertRowid, username, password_hash };
     },
 
@@ -122,12 +121,12 @@ const db = {
         const { data, error } = await supabase
           .from('admins')
           .update({ password_hash })
-          .eq('username', username.trim())
+          .ilike('username', username.trim())
           .select();
         if (error) throw new Error(error.message);
         return data && data.length > 0;
       }
-      const res = sqlite.prepare('UPDATE admins SET password_hash = ? WHERE username = ?').run(password_hash, username.trim());
+      const res = getSqlite().prepare('UPDATE admins SET password_hash = ? WHERE LOWER(username) = LOWER(?)').run(password_hash, username.trim());
       return res.changes > 0;
     },
 
@@ -139,7 +138,7 @@ const db = {
         if (error) throw new Error(error.message);
         return count || 0;
       }
-      const row = sqlite.prepare('SELECT COUNT(*) AS total FROM admins').get();
+      const row = getSqlite().prepare('SELECT COUNT(*) AS total FROM admins').get();
       return row ? row.total : 0;
     }
   },
@@ -156,7 +155,7 @@ const db = {
             panel,
             subsections (
               id,
-              documents ( id )
+              name
             )
           `)
           .order('id', { ascending: true });
@@ -168,16 +167,19 @@ const db = {
         const { data, error } = await query;
         if (error) throw new Error(error.message);
 
+        // Fetch document counts
+        const { data: docData } = await supabase.from('documents').select('section_id, section');
+
         return (data || []).map(s => {
           const subs = s.subsections || [];
           const subsectionCount = subs.length;
-          const documentCount = subs.reduce((sum, sub) => sum + (sub.documents ? sub.documents.length : 0), 0);
+          const docCount = (docData || []).filter(d => d.section_id === s.id || d.section === s.name).length;
           return {
             id: s.id,
             name: s.name,
             panel: s.panel,
             subsection_count: subsectionCount,
-            document_count: documentCount
+            document_count: docCount
           };
         });
       }
@@ -199,7 +201,7 @@ const db = {
         params.push(panel);
       }
       query += ` ORDER BY s.id ASC`;
-      return sqlite.prepare(query).all(...params);
+      return getSqlite().prepare(query).all(...params);
     },
 
     async getById(id) {
@@ -212,7 +214,7 @@ const db = {
         if (error) throw new Error(error.message);
         return data;
       }
-      return sqlite.prepare('SELECT id, name, panel FROM sections WHERE id = ?').get(id);
+      return getSqlite().prepare('SELECT id, name, panel FROM sections WHERE id = ?').get(id);
     },
 
     async findByNameAndPanel(name, panel, excludeId = null) {
@@ -235,7 +237,7 @@ const db = {
         sql += ' AND id != ?';
         params.push(excludeId);
       }
-      return sqlite.prepare(sql).get(...params);
+      return getSqlite().prepare(sql).get(...params);
     },
 
     async create({ name, panel = 'main' }) {
@@ -254,7 +256,7 @@ const db = {
           document_count: 0
         };
       }
-      const res = sqlite.prepare('INSERT INTO sections (name, panel) VALUES (?, ?)').run(name.trim(), panel);
+      const res = getSqlite().prepare('INSERT INTO sections (name, panel) VALUES (?, ?)').run(name.trim(), panel);
       return {
         id: res.lastInsertRowid,
         name: name.trim(),
@@ -278,8 +280,8 @@ const db = {
         if (error) throw new Error(error.message);
         return data;
       }
-      sqlite.prepare('UPDATE sections SET name = ?, panel = ? WHERE id = ?').run(name.trim(), panel, id);
-      return sqlite.prepare('SELECT id, name, panel FROM sections WHERE id = ?').get(id);
+      getSqlite().prepare('UPDATE sections SET name = ?, panel = ? WHERE id = ?').run(name.trim(), panel, id);
+      return getSqlite().prepare('SELECT id, name, panel FROM sections WHERE id = ?').get(id);
     },
 
     async delete(id) {
@@ -291,7 +293,7 @@ const db = {
         if (error) throw new Error(error.message);
         return true;
       }
-      sqlite.prepare('DELETE FROM sections WHERE id = ?').run(id);
+      getSqlite().prepare('DELETE FROM sections WHERE id = ?').run(id);
       return true;
     },
 
@@ -303,7 +305,7 @@ const db = {
         if (error) throw new Error(error.message);
         return count || 0;
       }
-      const row = sqlite.prepare('SELECT COUNT(*) AS total FROM sections').get();
+      const row = getSqlite().prepare('SELECT COUNT(*) AS total FROM sections').get();
       return row ? row.total : 0;
     },
 
@@ -311,30 +313,30 @@ const db = {
       if (db.isSupabase) {
         const { data, error } = await supabase
           .from('subsections')
-          .select(`
-            id,
-            name,
-            section_id,
-            documents ( id )
-          `)
+          .select(`id, name, section_id`)
           .eq('section_id', sectionId)
           .order('id', { ascending: true });
         if (error) throw new Error(error.message);
 
-        return (data || []).map(sub => ({
-          id: sub.id,
-          name: sub.name,
-          section_id: sub.section_id,
-          document_count: sub.documents ? sub.documents.length : 0
-        }));
+        const { data: docData } = await supabase.from('documents').select('subsection_id, subsection');
+
+        return (data || []).map(sub => {
+          const docCount = (docData || []).filter(d => d.subsection_id === sub.id || d.subsection === sub.name).length;
+          return {
+            id: sub.id,
+            name: sub.name,
+            section_id: sub.section_id,
+            document_count: docCount
+          };
+        });
       }
 
-      return sqlite.prepare(`
+      return getSqlite().prepare(`
         SELECT 
           sub.id, 
           sub.name, 
           sub.section_id,
-          (SELECT COUNT(*) FROM documents d WHERE d.subsection_id = sub.id) AS document_count
+          (SELECT COUNT(*) FROM documents d WHERE d.subsection_id = sub.id OR d.subsection = sub.name) AS document_count
         FROM subsections sub
         WHERE sub.section_id = ?
         ORDER BY sub.id ASC
@@ -352,8 +354,7 @@ const db = {
             id,
             name,
             section_id,
-            sections ( id, name, panel ),
-            documents ( id )
+            sections ( id, name, panel )
           `)
           .order('id', { ascending: true });
 
@@ -364,13 +365,15 @@ const db = {
         const { data, error } = await query;
         if (error) throw new Error(error.message);
 
+        const { data: docData } = await supabase.from('documents').select('subsection_id, subsection');
+
         return (data || []).map(sub => ({
           id: sub.id,
           name: sub.name,
           section_id: sub.section_id,
           section_name: sub.sections ? sub.sections.name : '',
           panel: sub.sections ? sub.sections.panel : 'main',
-          document_count: sub.documents ? sub.documents.length : 0
+          document_count: (docData || []).filter(d => d.subsection_id === sub.id || d.subsection === sub.name).length
         }));
       }
 
@@ -381,7 +384,7 @@ const db = {
           sub.section_id,
           s.name AS section_name,
           s.panel,
-          (SELECT COUNT(*) FROM documents d WHERE d.subsection_id = sub.id) AS document_count
+          (SELECT COUNT(*) FROM documents d WHERE d.subsection_id = sub.id OR d.subsection = sub.name) AS document_count
         FROM subsections sub
         JOIN sections s ON sub.section_id = s.id
       `;
@@ -391,7 +394,7 @@ const db = {
         params.push(sectionId);
       }
       query += ` ORDER BY sub.id ASC`;
-      return sqlite.prepare(query).all(...params);
+      return getSqlite().prepare(query).all(...params);
     },
 
     async getById(id) {
@@ -416,7 +419,7 @@ const db = {
           panel: data.sections ? data.sections.panel : 'main'
         };
       }
-      return sqlite.prepare(`
+      return getSqlite().prepare(`
         SELECT sub.*, s.name AS section_name, s.panel
         FROM subsections sub
         JOIN sections s ON sub.section_id = s.id
@@ -444,7 +447,7 @@ const db = {
         sql += ' AND id != ?';
         params.push(excludeId);
       }
-      return sqlite.prepare(sql).get(...params);
+      return getSqlite().prepare(sql).get(...params);
     },
 
     async create({ section_id, name }) {
@@ -469,8 +472,8 @@ const db = {
           document_count: 0
         };
       }
-      const res = sqlite.prepare('INSERT INTO subsections (section_id, name) VALUES (?, ?)').run(section_id, name.trim());
-      const section = sqlite.prepare('SELECT name, panel FROM sections WHERE id = ?').get(section_id);
+      const res = getSqlite().prepare('INSERT INTO subsections (section_id, name) VALUES (?, ?)').run(section_id, name.trim());
+      const section = getSqlite().prepare('SELECT name, panel FROM sections WHERE id = ?').get(section_id);
       return {
         id: res.lastInsertRowid,
         section_id,
@@ -506,7 +509,7 @@ const db = {
           panel: data.sections ? data.sections.panel : 'main'
         };
       }
-      sqlite.prepare('UPDATE subsections SET name = ?, section_id = ? WHERE id = ?').run(name.trim(), section_id, id);
+      getSqlite().prepare('UPDATE subsections SET name = ?, section_id = ? WHERE id = ?').run(name.trim(), section_id, id);
       return this.getById(id);
     },
 
@@ -519,41 +522,30 @@ const db = {
         if (error) throw new Error(error.message);
         return true;
       }
-      sqlite.prepare('DELETE FROM subsections WHERE id = ?').run(id);
+      getSqlite().prepare('DELETE FROM subsections WHERE id = ?').run(id);
       return true;
     }
   },
 
   // --- DOCUMENTS ---
   documents: {
-    async getAll({ section_id = '', subsection_id = '', search = '' } = {}) {
+    async getAll({ section_id = '', subsection_id = '', section = '', subsection = '', search = '' } = {}) {
       if (db.isSupabase) {
         let query = supabase
           .from('documents')
-          .select(`
-            id,
-            title,
-            description,
-            file_path,
-            file_size,
-            uploaded_at,
-            subsection_id,
-            subsections!inner (
-              id,
-              name,
-              section_id,
-              sections!inner (
-                id,
-                name
-              )
-            )
-          `)
+          .select('*')
           .order('uploaded_at', { ascending: false });
 
         if (subsection_id && subsection_id !== 'all' && subsection_id !== '') {
           query = query.eq('subsection_id', subsection_id);
-        } else if (section_id && section_id !== 'all' && section_id !== '') {
-          query = query.eq('subsections.section_id', section_id);
+        } else if (subsection && subsection !== 'all' && subsection !== '') {
+          query = query.eq('subsection', subsection);
+        }
+
+        if (section_id && section_id !== 'all' && section_id !== '') {
+          query = query.eq('section_id', section_id);
+        } else if (section && section !== 'all' && section !== '') {
+          query = query.eq('section', section);
         }
 
         if (search && search.trim()) {
@@ -568,13 +560,16 @@ const db = {
           id: d.id,
           title: d.title,
           description: d.description || '',
-          file_path: d.file_path,
+          section: d.section || '',
+          subsection: d.subsection || '',
+          section_id: d.section_id || '',
+          section_name: d.section || '',
+          subsection_id: d.subsection_id || '',
+          subsection_name: d.subsection || '',
+          file_url: d.file_url || d.file_path,
+          file_path: d.file_path || d.file_url,
           file_size: d.file_size || 0,
-          uploaded_at: d.uploaded_at,
-          subsection_id: d.subsections ? d.subsections.id : d.subsection_id,
-          subsection_name: d.subsections ? d.subsections.name : '',
-          section_id: d.subsections && d.subsections.sections ? d.subsections.sections.id : '',
-          section_name: d.subsections && d.subsections.sections ? d.subsections.sections.name : ''
+          uploaded_at: d.uploaded_at
         }));
       }
 
@@ -583,16 +578,15 @@ const db = {
           d.id,
           d.title,
           d.description,
+          d.section,
+          d.subsection,
+          d.section_id,
+          d.subsection_id,
+          d.file_url,
           d.file_path,
           d.file_size,
-          d.uploaded_at,
-          sub.id AS subsection_id,
-          sub.name AS subsection_name,
-          s.id AS section_id,
-          s.name AS section_name
+          d.uploaded_at
         FROM documents d
-        JOIN subsections sub ON d.subsection_id = sub.id
-        JOIN sections s ON sub.section_id = s.id
         WHERE 1=1
       `;
       const params = [];
@@ -600,9 +594,17 @@ const db = {
       if (subsection_id && subsection_id !== 'all' && subsection_id !== '') {
         query += ' AND d.subsection_id = ?';
         params.push(subsection_id);
-      } else if (section_id && section_id !== 'all' && section_id !== '') {
-        query += ' AND sub.section_id = ?';
+      } else if (subsection && subsection !== 'all' && subsection !== '') {
+        query += ' AND d.subsection = ?';
+        params.push(subsection);
+      }
+
+      if (section_id && section_id !== 'all' && section_id !== '') {
+        query += ' AND d.section_id = ?';
         params.push(section_id);
+      } else if (section && section !== 'all' && section !== '') {
+        query += ' AND d.section = ?';
+        params.push(section);
       }
 
       if (search && search.trim()) {
@@ -612,30 +614,30 @@ const db = {
       }
 
       query += ' ORDER BY d.uploaded_at DESC, d.id DESC';
-      return sqlite.prepare(query).all(...params);
+      const rows = getSqlite().prepare(query).all(...params);
+
+      return rows.map(d => ({
+        id: d.id,
+        title: d.title,
+        description: d.description || '',
+        section: d.section || '',
+        subsection: d.subsection || '',
+        section_id: d.section_id || '',
+        section_name: d.section || '',
+        subsection_id: d.subsection_id || '',
+        subsection_name: d.subsection || '',
+        file_url: d.file_url || d.file_path,
+        file_path: d.file_path || d.file_url,
+        file_size: d.file_size || 0,
+        uploaded_at: d.uploaded_at
+      }));
     },
 
     async getById(id) {
       if (db.isSupabase) {
         const { data, error } = await supabase
           .from('documents')
-          .select(`
-            id,
-            title,
-            description,
-            file_path,
-            file_size,
-            uploaded_at,
-            subsection_id,
-            subsections (
-              id,
-              name,
-              sections (
-                id,
-                name
-              )
-            )
-          `)
+          .select('*')
           .eq('id', id)
           .maybeSingle();
         if (error) throw new Error(error.message);
@@ -645,66 +647,80 @@ const db = {
           id: data.id,
           title: data.title,
           description: data.description || '',
-          file_path: data.file_path,
+          section: data.section || '',
+          subsection: data.subsection || '',
+          section_id: data.section_id || '',
+          section_name: data.section || '',
+          subsection_id: data.subsection_id || '',
+          subsection_name: data.subsection || '',
+          file_url: data.file_url || data.file_path,
+          file_path: data.file_path || data.file_url,
           file_size: data.file_size || 0,
-          uploaded_at: data.uploaded_at,
-          subsection_id: data.subsections ? data.subsections.id : data.subsection_id,
-          subsection_name: data.subsections ? data.subsections.name : '',
-          section_id: data.subsections && data.subsections.sections ? data.subsections.sections.id : '',
-          section_name: data.subsections && data.subsections.sections ? data.subsections.sections.name : ''
+          uploaded_at: data.uploaded_at
         };
       }
 
-      return sqlite.prepare(`
-        SELECT 
-          d.id,
-          d.title,
-          d.description,
-          d.file_path,
-          d.file_size,
-          d.uploaded_at,
-          sub.id AS subsection_id,
-          sub.name AS subsection_name,
-          s.id AS section_id,
-          s.name AS section_name
-        FROM documents d
-        JOIN subsections sub ON d.subsection_id = sub.id
-        JOIN sections s ON sub.section_id = s.id
-        WHERE d.id = ?
-      `).get(id);
+      const row = getSqlite().prepare(`SELECT * FROM documents WHERE id = ?`).get(id);
+      if (!row) return null;
+
+      return {
+        id: row.id,
+        title: row.title,
+        description: row.description || '',
+        section: row.section || '',
+        subsection: row.subsection || '',
+        section_id: row.section_id || '',
+        section_name: row.section || '',
+        subsection_id: row.subsection_id || '',
+        subsection_name: row.subsection || '',
+        file_url: row.file_url || row.file_path,
+        file_path: row.file_path || row.file_url,
+        file_size: row.file_size || 0,
+        uploaded_at: row.uploaded_at
+      };
     },
 
-    async create({ title, description = '', subsection_id, file_path, file_size = 0 }) {
+    async create({ title, description = '', section = '', subsection = '', section_id = null, subsection_id = null, file_url, file_path, file_size = 0 }) {
       if (db.isSupabase) {
+        const insertData = {
+          title: title.trim(),
+          description: (description || '').trim(),
+          section: section || '',
+          subsection: subsection || '',
+          file_url: file_url,
+          file_path: file_path,
+          file_size: file_size || 0
+        };
+        if (section_id) insertData.section_id = section_id;
+        if (subsection_id) insertData.subsection_id = subsection_id;
+
         const { data, error } = await supabase
           .from('documents')
-          .insert({
-            title: title.trim(),
-            description: (description || '').trim(),
-            subsection_id,
-            file_path,
-            file_size
-          })
+          .insert(insertData)
           .select()
           .single();
         if (error) throw new Error(error.message);
         return this.getById(data.id);
       }
 
-      const res = sqlite.prepare(`
-        INSERT INTO documents (title, description, subsection_id, file_path, file_size)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(title.trim(), (description || '').trim(), subsection_id, file_path, file_size);
+      const res = getSqlite().prepare(`
+        INSERT INTO documents (title, description, section, subsection, section_id, subsection_id, file_url, file_path, file_size)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(title.trim(), (description || '').trim(), section || '', subsection || '', section_id, subsection_id, file_url, file_path, file_size);
 
       return this.getById(res.lastInsertRowid);
     },
 
-    async update(id, { title, description, subsection_id, file_path, file_size }) {
+    async update(id, { title, description, section, subsection, section_id, subsection_id, file_url, file_path, file_size }) {
       if (db.isSupabase) {
         const updates = {};
         if (title !== undefined) updates.title = title.trim();
         if (description !== undefined) updates.description = (description || '').trim();
+        if (section !== undefined) updates.section = section;
+        if (subsection !== undefined) updates.subsection = subsection;
+        if (section_id !== undefined) updates.section_id = section_id;
         if (subsection_id !== undefined) updates.subsection_id = subsection_id;
+        if (file_url !== undefined) updates.file_url = file_url;
         if (file_path !== undefined) updates.file_path = file_path;
         if (file_size !== undefined) updates.file_size = file_size;
 
@@ -717,11 +733,19 @@ const db = {
         return this.getById(id);
       }
 
-      sqlite.prepare(`
+      getSqlite().prepare(`
         UPDATE documents 
-        SET title = ?, description = ?, subsection_id = ?, file_path = ?, file_size = ?
+        SET title = COALESCE(?, title),
+            description = COALESCE(?, description),
+            section = COALESCE(?, section),
+            subsection = COALESCE(?, subsection),
+            section_id = COALESCE(?, section_id),
+            subsection_id = COALESCE(?, subsection_id),
+            file_url = COALESCE(?, file_url),
+            file_path = COALESCE(?, file_path),
+            file_size = COALESCE(?, file_size)
         WHERE id = ?
-      `).run(title.trim(), (description || '').trim(), subsection_id, file_path, file_size, id);
+      `).run(title, description, section, subsection, section_id, subsection_id, file_url, file_path, file_size, id);
 
       return this.getById(id);
     },
@@ -736,7 +760,7 @@ const db = {
         return true;
       }
 
-      sqlite.prepare('DELETE FROM documents WHERE id = ?').run(id);
+      getSqlite().prepare('DELETE FROM documents WHERE id = ?').run(id);
       return true;
     },
 
@@ -748,7 +772,7 @@ const db = {
         if (error) throw new Error(error.message);
         return count || 0;
       }
-      const row = sqlite.prepare('SELECT COUNT(*) AS total FROM documents').get();
+      const row = getSqlite().prepare('SELECT COUNT(*) AS total FROM documents').get();
       return row ? row.total : 0;
     }
   }

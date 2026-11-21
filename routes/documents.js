@@ -5,9 +5,10 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db');
 const storageService = require('../services/storage');
+const { supabase, supabaseBucket } = require('../supabase');
 const { authMiddleware } = require('../middleware/auth');
 
-// Multer in-memory storage (processes buffer before uploading to Supabase or disk)
+// Multer in-memory storage: nothing is written to local filesystem
 const storage = multer.memoryStorage();
 
 // PDF file filter - validates MIME type and extension
@@ -36,7 +37,7 @@ function sanitizeFilename(title) {
   return clean || 'document';
 }
 
-// Helper to verify PDF magic bytes (%PDF) from buffer or file
+// Helper to verify PDF magic bytes (%PDF) from in-memory buffer
 function verifyPdfMagicBytes(bufferOrPath) {
   try {
     if (Buffer.isBuffer(bufferOrPath)) {
@@ -53,14 +54,14 @@ function verifyPdfMagicBytes(bufferOrPath) {
   }
 }
 
-// GET /api/documents - Public listing with filters (section, subsection, search)
+// GET /api/documents - Public listing and search using Supabase
 router.get('/', async (req, res) => {
   try {
-    const { section_id, subsection_id, search } = req.query;
-    const documents = await db.documents.getAll({ section_id, subsection_id, search });
+    const { section_id, subsection_id, section, subsection, search } = req.query;
+    const documents = await db.documents.getAll({ section_id, subsection_id, section, subsection, search });
     res.json(documents);
   } catch (err) {
-    console.error('Error fetching documents:', err);
+    console.error('Error fetching documents from Supabase:', err);
     res.status(500).json({ error: 'Failed to retrieve documents' });
   }
 });
@@ -78,7 +79,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// GET /api/documents/:id/download - Download PDF with admin-given title
+// GET /api/documents/:id/download - Download PDF from Supabase with admin-given title
 router.get('/:id/download', async (req, res) => {
   try {
     const doc = await db.documents.getById(req.params.id);
@@ -92,31 +93,41 @@ router.get('/:id/download', async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
 
-    // If remote URL (Supabase Storage)
-    if (doc.file_path.startsWith('http://') || doc.file_path.startsWith('https://')) {
-      const response = await fetch(doc.file_path);
+    // If public URL available, fetch and pipe stream to client
+    const targetUrl = doc.file_url || doc.file_path;
+    if (targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
+      const response = await fetch(targetUrl);
       if (!response.ok) {
-        return res.status(502).json({ error: 'Failed to retrieve file from remote storage' });
+        return res.status(502).json({ error: 'Failed to retrieve file from Supabase storage' });
       }
       const arrayBuffer = await response.arrayBuffer();
       return res.send(Buffer.from(arrayBuffer));
     }
 
-    // Local file fallback
-    const fullPath = path.isAbsolute(doc.file_path) ? doc.file_path : path.join(__dirname, '..', doc.file_path);
-    if (!fs.existsSync(fullPath)) {
-      return res.status(404).json({ error: 'File on disk could not be located' });
+    // Direct Supabase Storage download if relative key
+    if (db.isSupabase && supabase) {
+      const { data, error } = await supabase.storage.from(supabaseBucket).download(doc.file_path);
+      if (error) {
+        return res.status(502).json({ error: 'Failed to retrieve file from Supabase storage bucket' });
+      }
+      const buffer = Buffer.from(await data.arrayBuffer());
+      return res.send(buffer);
     }
 
-    const fileStream = fs.createReadStream(fullPath);
-    fileStream.pipe(res);
+    // Local file fallback for offline testing only
+    const fullPath = path.isAbsolute(doc.file_path) ? doc.file_path : path.join(__dirname, '..', doc.file_path);
+    if (fs.existsSync(fullPath)) {
+      return fs.createReadStream(fullPath).pipe(res);
+    }
+
+    return res.status(404).json({ error: 'File could not be located' });
   } catch (err) {
     console.error('Download error:', err);
     res.status(500).json({ error: 'Failed to download document' });
   }
 });
 
-// GET /api/documents/:id/view - Inline view / preview PDF in browser
+// GET /api/documents/:id/view - Inline view / preview PDF in browser from Supabase
 router.get('/:id/view', async (req, res) => {
   try {
     const doc = await db.documents.getById(req.params.id);
@@ -124,30 +135,35 @@ router.get('/:id/view', async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    // If remote URL (Supabase Storage), redirect to public URL for fast in-browser preview
-    if (doc.file_path.startsWith('http://') || doc.file_path.startsWith('https://')) {
-      return res.redirect(doc.file_path);
+    const targetUrl = doc.file_url || doc.file_path;
+    if (targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
+      return res.redirect(targetUrl);
     }
 
-    // Local file fallback
+    if (db.isSupabase && supabase) {
+      const { data } = supabase.storage.from(supabaseBucket).getPublicUrl(doc.file_path);
+      if (data && data.publicUrl) {
+        return res.redirect(data.publicUrl);
+      }
+    }
+
+    // Local file fallback for offline testing only
     const fullPath = path.isAbsolute(doc.file_path) ? doc.file_path : path.join(__dirname, '..', doc.file_path);
-    if (!fs.existsSync(fullPath)) {
-      return res.status(404).json({ error: 'File on disk could not be located' });
+    if (fs.existsSync(fullPath)) {
+      const safeFilename = `${sanitizeFilename(doc.title)}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${safeFilename}"`);
+      return fs.createReadStream(fullPath).pipe(res);
     }
 
-    const safeFilename = `${sanitizeFilename(doc.title)}.pdf`;
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${safeFilename}"`);
-
-    const fileStream = fs.createReadStream(fullPath);
-    fileStream.pipe(res);
+    return res.status(404).json({ error: 'File could not be located' });
   } catch (err) {
     console.error('View error:', err);
     res.status(500).json({ error: 'Failed to view document' });
   }
 });
 
-// POST /api/documents - Admin Upload document
+// POST /api/documents - Admin Upload document to Supabase (memory storage -> Supabase Storage 'pdfs' + documents table)
 router.post('/', authMiddleware, (req, res) => {
   upload.single('pdf')(req, res, async (err) => {
     if (err instanceof multer.MulterError) {
@@ -163,43 +179,55 @@ router.post('/', authMiddleware, (req, res) => {
       return res.status(400).json({ error: 'A PDF file is required' });
     }
 
-    const { title, description, subsection_id } = req.body;
+    const { title, description, subsection_id, section_id, section, subsection } = req.body;
 
     if (!title || !title.trim()) {
       return res.status(400).json({ error: 'Document title is required' });
     }
 
-    if (!subsection_id) {
+    if (!subsection_id && !subsection) {
       return res.status(400).json({ error: 'Subsection is required' });
     }
 
     try {
-      // Verify subsection exists
-      const sub = await db.subsections.getById(subsection_id);
-      if (!sub) {
-        return res.status(400).json({ error: 'Selected subsection does not exist' });
+      let sectionName = section || '';
+      let subsectionName = subsection || '';
+      let targetSubId = subsection_id;
+      let targetSecId = section_id;
+
+      if (subsection_id) {
+        const sub = await db.subsections.getById(subsection_id);
+        if (sub) {
+          subsectionName = sub.name;
+          sectionName = sub.section_name || sectionName;
+          targetSecId = sub.section_id || targetSecId;
+        }
       }
 
-      // Check magic bytes
+      // Check magic bytes (%PDF) from memory buffer
       if (!verifyPdfMagicBytes(req.file.buffer)) {
         return res.status(400).json({ error: 'Corrupt or invalid PDF file format' });
       }
 
-      // Upload file to storage (Supabase Storage or local disk fallback)
+      // Upload PDF buffer to Supabase Storage bucket 'pdfs'
       const uploadResult = await storageService.uploadPdf(req.file.buffer, req.file.originalname);
 
-      // Save metadata and file path/URL to database
+      // Store title, description, section, subsection, file_url and file_path in Supabase documents table
       const created = await db.documents.create({
         title: title.trim(),
         description: (description || '').trim(),
-        subsection_id,
+        section: sectionName,
+        subsection: subsectionName,
+        section_id: targetSecId,
+        subsection_id: targetSubId,
+        file_url: uploadResult.fileUrl,
         file_path: uploadResult.filePath,
         file_size: uploadResult.fileSize
       });
 
       return res.status(201).json(created);
     } catch (insertErr) {
-      console.error('Error saving document:', insertErr);
+      console.error('Error saving document to Supabase:', insertErr);
       return res.status(500).json({ error: insertErr.message || 'Database error while saving document' });
     }
   });
@@ -225,21 +253,29 @@ router.put('/:id', authMiddleware, (req, res) => {
         return res.status(404).json({ error: 'Document not found' });
       }
 
-      const { title, description, subsection_id } = req.body;
+      const { title, description, subsection_id, section_id, section, subsection } = req.body;
 
       const newTitle = title ? title.trim() : existing.title;
       const newDesc = description !== undefined ? description.trim() : existing.description;
       const newSubId = subsection_id ? parseInt(subsection_id, 10) : existing.subsection_id;
+      const newSecId = section_id ? parseInt(section_id, 10) : existing.section_id;
 
       if (!newTitle) {
         return res.status(400).json({ error: 'Document title cannot be empty' });
       }
 
-      const sub = await db.subsections.getById(newSubId);
-      if (!sub) {
-        return res.status(400).json({ error: 'Selected subsection does not exist' });
+      let sectionName = section || existing.section;
+      let subsectionName = subsection || existing.subsection;
+
+      if (newSubId) {
+        const sub = await db.subsections.getById(newSubId);
+        if (sub) {
+          subsectionName = sub.name;
+          sectionName = sub.section_name || sectionName;
+        }
       }
 
+      let fileUrl = existing.file_url;
       let filePath = existing.file_path;
       let fileSize = existing.file_size;
 
@@ -248,12 +284,13 @@ router.put('/:id', authMiddleware, (req, res) => {
           return res.status(400).json({ error: 'Corrupt or invalid PDF file format' });
         }
 
-        // Upload new file to storage
+        // Upload new file to Supabase Storage bucket 'pdfs'
         const uploadResult = await storageService.uploadPdf(req.file.buffer, req.file.originalname);
 
         // Delete old file from storage
-        await storageService.deletePdf(existing.file_path);
+        await storageService.deletePdf(existing.file_path || existing.file_url);
 
+        fileUrl = uploadResult.fileUrl;
         filePath = uploadResult.filePath;
         fileSize = uploadResult.fileSize;
       }
@@ -261,20 +298,24 @@ router.put('/:id', authMiddleware, (req, res) => {
       const updated = await db.documents.update(docId, {
         title: newTitle,
         description: newDesc,
+        section: sectionName,
+        subsection: subsectionName,
+        section_id: newSecId,
         subsection_id: newSubId,
+        file_url: fileUrl,
         file_path: filePath,
         file_size: fileSize
       });
 
       return res.json(updated);
     } catch (updateErr) {
-      console.error('Error updating document:', updateErr);
+      console.error('Error updating document in Supabase:', updateErr);
       return res.status(500).json({ error: updateErr.message || 'Database error while updating document' });
     }
   });
 });
 
-// DELETE /api/documents/:id - Admin Delete document
+// DELETE /api/documents/:id - Admin Delete document from Supabase
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const docId = req.params.id;
@@ -283,14 +324,14 @@ router.delete('/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    // Remove file from storage
-    await storageService.deletePdf(doc.file_path);
+    // Remove file from Supabase Storage bucket 'pdfs'
+    await storageService.deletePdf(doc.file_path || doc.file_url);
 
-    // Delete document record
+    // Delete document record from Supabase table 'documents'
     await db.documents.delete(docId);
     res.json({ message: `Document "${doc.title}" deleted successfully` });
   } catch (err) {
-    console.error('Error deleting document:', err);
+    console.error('Error deleting document from Supabase:', err);
     res.status(500).json({ error: 'Failed to delete document' });
   }
 });
