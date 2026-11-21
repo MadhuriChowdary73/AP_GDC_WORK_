@@ -6,10 +6,10 @@ const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const { authMiddleware, JWT_SECRET } = require('../middleware/auth');
 
-// Rate limiter for login: max 5 requests per 15 minutes
+// Rate limiter for login: max 50 requests per 15 minutes
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 50,
   standardHeaders: true,
   legacyHeaders: false,
   message: {

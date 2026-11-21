@@ -14,7 +14,7 @@ function request(options, data = null) {
       res.on('data', (chunk) => body += chunk);
       res.on('end', () => {
         let json = null;
-        try { json = JSON.parse(body); } catch (e) {}
+        try { json = JSON.parse(body); } catch (e) { }
         resolve({
           statusCode: res.statusCode,
           headers: res.headers,
@@ -68,7 +68,7 @@ function uploadRequest(pathStr, fields, fileField, token = '') {
       res.on('data', (chunk) => body += chunk);
       res.on('end', () => {
         let json = null;
-        try { json = JSON.parse(body); } catch (e) {}
+        try { json = JSON.parse(body); } catch (e) { }
         resolve({
           statusCode: res.statusCode,
           headers: res.headers,
@@ -143,23 +143,14 @@ async function runTests() {
     console.log('  Rejected invalid credentials as expected.');
 
     // 7. Test Admin Login (success case)
-    console.log('7. Testing Admin Login with seeded credentials (madhuri / m2007)...');
+    console.log('7. Testing Admin Login with seeded credentials (admin / admin123)...');
     res = await request({
       hostname: '127.0.0.1',
       port: PORT,
       path: '/api/auth/login',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
-    }, JSON.stringify({ username: 'madhuri', password: 'm2007' }));
-    if (res.statusCode !== 200) {
-      res = await request({
-        hostname: '127.0.0.1',
-        port: PORT,
-        path: '/api/auth/login',
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      }, JSON.stringify({ username: 'admin', password: 'admin123' }));
-    }
+    }, JSON.stringify({ username: 'admin', password: 'admin123' }));
     console.assert(res.statusCode === 200, `Expected 200, got ${res.statusCode}`);
     console.assert(res.json && res.json.token, 'Token should be returned');
     adminToken = res.json.token;

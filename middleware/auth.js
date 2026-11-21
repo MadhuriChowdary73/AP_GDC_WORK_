@@ -23,7 +23,13 @@ async function authMiddleware(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    const admin = await db.admins.findById(decoded.id);
+    let admin = null;
+    if (decoded.id) {
+      admin = await db.admins.findById(decoded.id);
+    }
+    if (!admin && decoded.username) {
+      admin = await db.admins.findByUsername(decoded.username);
+    }
     if (!admin) {
       return res.status(401).json({ error: 'Unauthorized: Admin account no longer exists' });
     }

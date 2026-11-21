@@ -3,14 +3,29 @@ const db = require('./db');
 
 async function runSeed() {
   try {
-    // 1. Seed Default Admin if table is empty or admin doesn't exist
-    const adminCount = await db.admins.count();
-    if (adminCount === 0) {
-      console.log('No admin found. Seeding default admin user...');
-      const salt = bcrypt.genSaltSync(10);
-      const hash = bcrypt.hashSync('m2007', salt);
-      await db.admins.create({ username: 'madhuri', password_hash: hash });
-      console.log('Admin user created successfully (username: madhuri).');
+    // 1. Seed or repair Default Admins
+    const salt = bcrypt.genSaltSync(10);
+    const m2007Hash = bcrypt.hashSync('m2007', salt);
+    const admin123Hash = bcrypt.hashSync('admin123', salt);
+
+    const existingMadhuri = await db.admins.findByUsername('madhuri');
+    if (!existingMadhuri) {
+      await db.admins.create({ username: 'madhuri', password_hash: m2007Hash });
+      console.log('Admin user "madhuri" created successfully.');
+    } else if (!bcrypt.compareSync('m2007', existingMadhuri.password_hash)) {
+      console.log('Updating password hash for "madhuri"...');
+      await db.admins.updatePassword('madhuri', m2007Hash);
+      console.log('Password hash for "madhuri" updated to m2007.');
+    }
+
+    const existingAdmin = await db.admins.findByUsername('admin');
+    if (!existingAdmin) {
+      await db.admins.create({ username: 'admin', password_hash: admin123Hash });
+      console.log('Admin user "admin" created successfully.');
+    } else if (!bcrypt.compareSync('admin123', existingAdmin.password_hash)) {
+      console.log('Updating password hash for "admin"...');
+      await db.admins.updatePassword('admin', admin123Hash);
+      console.log('Password hash for "admin" updated to admin123.');
     }
 
     // 2. Seed Default Sections and Subsections ONLY if sections table is empty

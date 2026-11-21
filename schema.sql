@@ -80,10 +80,12 @@ BEGIN
 END $$;
 
 -- 6. Initial Default Data (Idempotent: Only inserts if table is empty)
--- Default Admin (username: madhuri, password: m2007)
+-- Default Admins: madhuri (m2007) and admin (admin123)
 INSERT INTO admins (username, password_hash)
-SELECT 'madhuri', '$2a$10$WqBq99K7o2mffJ4iM8KfZerG78n7m9wHjL8kG3D5p7eL1HwzX2M7q'
-WHERE NOT EXISTS (SELECT 1 FROM admins WHERE username = 'madhuri');
+VALUES 
+  ('madhuri', '$2b$10$7fMJvwEKSt6hZhbXPy6s3uwCywGls4jvaROwWnoOKIsdWEiUn61qW'),
+  ('admin', '$2b$10$4V7uHV4hlDyg7fZ9SFjj1e/LKp/W8snSiajzmEe2HbRdLcZN0UCVm')
+ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
 
 -- Default Sections
 INSERT INTO sections (name, panel)
