@@ -1,7 +1,3 @@
--- =====================================================================
--- AP Higher Education PDF Library - Supabase Postgres Schema
--- Run this in the Supabase Dashboard -> SQL Editor -> New Query -> Run
--- =====================================================================
 
 -- 1. Admins Table
 CREATE TABLE IF NOT EXISTS admins (
@@ -38,6 +34,7 @@ CREATE TABLE IF NOT EXISTS documents (
     file_url TEXT NOT NULL,
     file_path TEXT NOT NULL,
     file_size BIGINT DEFAULT 0,
+    original_filename TEXT DEFAULT '',
     uploaded_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -47,6 +44,7 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS subsection TEXT DEFAULT '';
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_url TEXT DEFAULT '';
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_path TEXT DEFAULT '';
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_size BIGINT DEFAULT 0;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS original_filename TEXT DEFAULT '';
 
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_sections_panel ON sections(panel);

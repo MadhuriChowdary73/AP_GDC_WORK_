@@ -115,14 +115,19 @@ const App = {
     }
   },
 
-  openPdfModal(viewUrl, title, downloadUrl) {
+  openPdfModal(viewUrl, title, downloadUrl, filename = '') {
     const modal = document.getElementById('pdf-viewer-modal');
     const titleEl = document.getElementById('pdf-modal-title');
     const downloadLink = document.getElementById('pdf-modal-download-btn');
     const iframe = document.getElementById('pdf-modal-iframe');
 
     if (titleEl) titleEl.textContent = title;
-    if (downloadLink) downloadLink.href = downloadUrl;
+    if (downloadLink) {
+      downloadLink.href = downloadUrl;
+      if (filename) {
+        downloadLink.setAttribute('download', filename);
+      }
+    }
     if (iframe) iframe.src = viewUrl;
 
     if (modal) modal.style.display = 'flex';

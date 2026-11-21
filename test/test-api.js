@@ -168,24 +168,36 @@ async function runTests() {
     console.assert(res.statusCode === 401, `Expected 401 Unauthorized, got ${res.statusCode}`);
     console.log('  Unauthorized request blocked as expected.');
 
-    // 9. Test PDF Upload (Admin only)
-    console.log('9. Testing Admin PDF Upload with valid PDF...');
+    // 9. Test PDF Upload (Admin only) with special characters in filename
+    console.log('9. Testing Admin PDF Upload with sanitized storage path and original filename preservation...');
     const samplePdfBytes = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\nxref\n0 4\n0000000000 65535 f \n0000000010 00000 n \n0000000060 00000 n \n0000000117 00000 n \ntrailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n178\n%%EOF\n', 'utf8');
 
+    const testOriginalFilename = 'Test Order (2024) #1 [Final]!.pdf';
     res = await uploadRequest('/api/documents', {
       title: 'Automated Test Official Order 2024',
       description: 'Uploaded via automated API test suite.',
       subsection_id: targetSub.id
     }, {
       name: 'pdf',
-      filename: 'sample_upload.pdf',
+      filename: testOriginalFilename,
       contentType: 'application/pdf',
       content: samplePdfBytes
     }, adminToken);
 
     console.assert(res.statusCode === 201, `Expected 201 Created, got ${res.statusCode}: ${res.body}`);
     const uploadedDoc = res.json;
-    console.log(`  Uploaded document created with ID ${uploadedDoc.id}, title: "${uploadedDoc.title}"`);
+    console.assert(uploadedDoc.original_filename === testOriginalFilename, `Expected original_filename to be preserved, got ${uploadedDoc.original_filename}`);
+    
+    // Verify storage path has timestamp and sanitized characters only
+    const storageFilename = path.basename(uploadedDoc.file_path);
+    console.assert(/^\d+_[a-zA-Z0-9.\-_]+$/.test(storageFilename), `Storage path filename must match timestamp_sanitizedName format, got: ${storageFilename}`);
+    console.log(`  Uploaded document created with ID ${uploadedDoc.id}, original_filename: "${uploadedDoc.original_filename}", storage filename: "${storageFilename}"`);
+
+    // Verify download header uses original filename
+    const dlCheck = await request({ hostname: '127.0.0.1', port: PORT, path: `/api/documents/${uploadedDoc.id}/download`, method: 'GET' });
+    console.assert(dlCheck.statusCode === 200, `Download failed: ${dlCheck.statusCode}`);
+    console.assert(dlCheck.headers['content-disposition'].includes(encodeURIComponent('Test Order (2024) #1 [Final]!.pdf')) || dlCheck.headers['content-disposition'].includes('Test_Order'), `Disposition should contain original filename: ${dlCheck.headers['content-disposition']}`);
+    console.log('  Preserved original filename in download disposition confirmed.');
 
     // 10. Test Edit Document (Admin only)
     console.log(`10. Testing Admin Edit Document for ID ${uploadedDoc.id}...`);

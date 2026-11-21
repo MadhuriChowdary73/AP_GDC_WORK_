@@ -7,8 +7,9 @@ const path = require('path');
 const fs = require('fs');
 const { supabase, isConfigured, supabaseBucket } = require('../supabase');
 
-function sanitizeFilename(name) {
-  return name.replace(/[/\\?%*:|"<>]/g, '_').trim() || 'document';
+function sanitizeStorageFilename(filename) {
+  // Replace every character other than letters, numbers, dot, dash and underscore with an underscore
+  return filename.replace(/[^a-zA-Z0-9.\-_]/g, '_');
 }
 
 const StorageService = {
@@ -16,19 +17,20 @@ const StorageService = {
    * Upload a PDF buffer to Supabase Storage bucket ('pdfs')
    * @param {Buffer} buffer - File buffer from multer memoryStorage
    * @param {string} originalName - Original filename
-   * @returns {Promise<{ fileUrl: string, filePath: string, fileSize: number, isRemote: boolean }>}
+   * @returns {Promise<{ fileUrl: string, filePath: string, fileSize: number, originalName: string, isRemote: boolean }>}
    */
   async uploadPdf(buffer, originalName = 'document.pdf') {
     const timestamp = Date.now();
-    const randomSuffix = Math.random().toString(36).substring(2, 8);
-    const cleanName = sanitizeFilename(path.parse(originalName).name);
-    const filename = `${timestamp}_${randomSuffix}_${cleanName}.pdf`;
+    // Sanitize the file name: replace every character other than letters, numbers, dot, dash and underscore with an underscore
+    const sanitizedName = sanitizeStorageFilename(originalName);
+    // Prefix a timestamp and use the sanitized name only for the storage path
+    const storagePath = `${timestamp}_${sanitizedName}`;
 
     if (isConfigured && supabase) {
       // Upload directly to Supabase Storage bucket 'pdfs'
       const { data, error } = await supabase.storage
         .from(supabaseBucket)
-        .upload(filename, buffer, {
+        .upload(storagePath, buffer, {
           contentType: 'application/pdf',
           upsert: false
         });
@@ -40,12 +42,13 @@ const StorageService = {
       // Retrieve public URL
       const { data: urlData } = supabase.storage
         .from(supabaseBucket)
-        .getPublicUrl(filename);
+        .getPublicUrl(storagePath);
 
       return {
         fileUrl: urlData.publicUrl,
-        filePath: filename,
+        filePath: storagePath,
         fileSize: buffer.length,
+        originalName: originalName,
         isRemote: true
       };
     }
@@ -55,14 +58,15 @@ const StorageService = {
     if (!fs.existsSync(localUploadsDir)) {
       fs.mkdirSync(localUploadsDir, { recursive: true });
     }
-    const localPath = path.join(localUploadsDir, filename);
+    const localPath = path.join(localUploadsDir, storagePath);
     fs.writeFileSync(localPath, buffer);
-    const relativePath = path.join('uploads', filename);
+    const relativePath = path.join('uploads', storagePath);
 
     return {
       fileUrl: relativePath,
       filePath: relativePath,
       fileSize: buffer.length,
+      originalName: originalName,
       isRemote: false
     };
   },

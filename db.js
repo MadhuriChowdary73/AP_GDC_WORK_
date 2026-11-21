@@ -50,6 +50,7 @@ function getSqlite() {
         file_url TEXT NOT NULL,
         file_path TEXT NOT NULL,
         file_size INTEGER DEFAULT 0,
+        original_filename TEXT DEFAULT '',
         uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -58,6 +59,7 @@ function getSqlite() {
     try { sqliteInstance.exec("ALTER TABLE documents ADD COLUMN subsection TEXT DEFAULT ''"); } catch (_) {}
     try { sqliteInstance.exec("ALTER TABLE documents ADD COLUMN section_id INTEGER"); } catch (_) {}
     try { sqliteInstance.exec("ALTER TABLE documents ADD COLUMN file_url TEXT"); } catch (_) {}
+    try { sqliteInstance.exec("ALTER TABLE documents ADD COLUMN original_filename TEXT DEFAULT ''"); } catch (_) {}
     try { sqliteInstance.exec("UPDATE documents SET file_url = file_path WHERE file_url IS NULL"); } catch (_) {}
   }
   return sqliteInstance;
@@ -569,6 +571,7 @@ const db = {
           file_url: d.file_url || d.file_path,
           file_path: d.file_path || d.file_url,
           file_size: d.file_size || 0,
+          original_filename: d.original_filename || d.title || '',
           uploaded_at: d.uploaded_at
         }));
       }
@@ -585,6 +588,7 @@ const db = {
           d.file_url,
           d.file_path,
           d.file_size,
+          d.original_filename,
           d.uploaded_at
         FROM documents d
         WHERE 1=1
@@ -609,8 +613,8 @@ const db = {
 
       if (search && search.trim()) {
         const term = `%${search.trim().toLowerCase()}%`;
-        query += ' AND (LOWER(d.title) LIKE ? OR LOWER(d.description) LIKE ?)';
-        params.push(term, term);
+        query += " AND (LOWER(d.title) LIKE ? OR LOWER(d.description) LIKE ? OR LOWER(COALESCE(d.original_filename, '')) LIKE ?)";
+        params.push(term, term, term);
       }
 
       query += ' ORDER BY d.uploaded_at DESC, d.id DESC';
@@ -629,6 +633,7 @@ const db = {
         file_url: d.file_url || d.file_path,
         file_path: d.file_path || d.file_url,
         file_size: d.file_size || 0,
+        original_filename: d.original_filename || d.title || '',
         uploaded_at: d.uploaded_at
       }));
     },
@@ -656,6 +661,7 @@ const db = {
           file_url: data.file_url || data.file_path,
           file_path: data.file_path || data.file_url,
           file_size: data.file_size || 0,
+          original_filename: data.original_filename || data.title || '',
           uploaded_at: data.uploaded_at
         };
       }
@@ -676,11 +682,12 @@ const db = {
         file_url: row.file_url || row.file_path,
         file_path: row.file_path || row.file_url,
         file_size: row.file_size || 0,
+        original_filename: row.original_filename || row.title || '',
         uploaded_at: row.uploaded_at
       };
     },
 
-    async create({ title, description = '', section = '', subsection = '', section_id = null, subsection_id = null, file_url, file_path, file_size = 0 }) {
+    async create({ title, description = '', section = '', subsection = '', section_id = null, subsection_id = null, file_url, file_path, file_size = 0, original_filename = '' }) {
       if (db.isSupabase) {
         const insertData = {
           title: title.trim(),
@@ -689,7 +696,8 @@ const db = {
           subsection: subsection || '',
           file_url: file_url,
           file_path: file_path,
-          file_size: file_size || 0
+          file_size: file_size || 0,
+          original_filename: original_filename || title.trim()
         };
         if (section_id) insertData.section_id = section_id;
         if (subsection_id) insertData.subsection_id = subsection_id;
@@ -704,14 +712,14 @@ const db = {
       }
 
       const res = getSqlite().prepare(`
-        INSERT INTO documents (title, description, section, subsection, section_id, subsection_id, file_url, file_path, file_size)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(title.trim(), (description || '').trim(), section || '', subsection || '', section_id, subsection_id, file_url, file_path, file_size);
+        INSERT INTO documents (title, description, section, subsection, section_id, subsection_id, file_url, file_path, file_size, original_filename)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(title.trim(), (description || '').trim(), section || '', subsection || '', section_id, subsection_id, file_url, file_path, file_size, original_filename || title.trim());
 
       return this.getById(res.lastInsertRowid);
     },
 
-    async update(id, { title, description, section, subsection, section_id, subsection_id, file_url, file_path, file_size }) {
+    async update(id, { title, description, section, subsection, section_id, subsection_id, file_url, file_path, file_size, original_filename }) {
       if (db.isSupabase) {
         const updates = {};
         if (title !== undefined) updates.title = title.trim();
@@ -723,6 +731,7 @@ const db = {
         if (file_url !== undefined) updates.file_url = file_url;
         if (file_path !== undefined) updates.file_path = file_path;
         if (file_size !== undefined) updates.file_size = file_size;
+        if (original_filename !== undefined) updates.original_filename = original_filename;
 
         const { error } = await supabase
           .from('documents')
@@ -743,9 +752,10 @@ const db = {
             subsection_id = COALESCE(?, subsection_id),
             file_url = COALESCE(?, file_url),
             file_path = COALESCE(?, file_path),
-            file_size = COALESCE(?, file_size)
+            file_size = COALESCE(?, file_size),
+            original_filename = COALESCE(?, original_filename)
         WHERE id = ?
-      `).run(title, description, section, subsection, section_id, subsection_id, file_url, file_path, file_size, id);
+      `).run(title, description, section, subsection, section_id, subsection_id, file_url, file_path, file_size, original_filename, id);
 
       return this.getById(id);
     },

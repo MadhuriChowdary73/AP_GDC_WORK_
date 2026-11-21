@@ -79,7 +79,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// GET /api/documents/:id/download - Download PDF from Supabase with admin-given title
+// GET /api/documents/:id/download - Download PDF from Supabase with original file name
 router.get('/:id/download', async (req, res) => {
   try {
     const doc = await db.documents.getById(req.params.id);
@@ -87,11 +87,17 @@ router.get('/:id/download', async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    const safeFilename = `${sanitizeFilename(doc.title)}.pdf`;
+    // Keep the original file name for download
+    let downloadFilename = doc.original_filename || (doc.title ? `${doc.title}.pdf` : 'document.pdf');
+    if (!downloadFilename.toLowerCase().endsWith('.pdf')) {
+      downloadFilename += '.pdf';
+    }
+    const safeFilename = downloadFilename.replace(/[/\\?%*:|"<>]/g, '_').trim();
+    const cleanHeaderFilename = safeFilename.replace(/[\r\n"]/g, '_');
     const encodedFilename = encodeURIComponent(safeFilename);
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
+    res.setHeader('Content-Disposition', `attachment; filename="${cleanHeaderFilename}"; filename*=UTF-8''${encodedFilename}`);
 
     // If public URL available, fetch and pipe stream to client
     const targetUrl = doc.file_url || doc.file_path;
@@ -209,10 +215,12 @@ router.post('/', authMiddleware, (req, res) => {
         return res.status(400).json({ error: 'Corrupt or invalid PDF file format' });
       }
 
-      // Upload PDF buffer to Supabase Storage bucket 'pdfs'
-      const uploadResult = await storageService.uploadPdf(req.file.buffer, req.file.originalname);
+      const originalFilename = req.file.originalname || `${title.trim()}.pdf`;
 
-      // Store title, description, section, subsection, file_url and file_path in Supabase documents table
+      // Upload PDF buffer to Supabase Storage bucket 'pdfs' (sanitized name prefixed with timestamp for storage path only)
+      const uploadResult = await storageService.uploadPdf(req.file.buffer, originalFilename);
+
+      // Store title, description, section, subsection, file_url, file_path, and original_filename in Supabase documents table
       const created = await db.documents.create({
         title: title.trim(),
         description: (description || '').trim(),
@@ -222,7 +230,8 @@ router.post('/', authMiddleware, (req, res) => {
         subsection_id: targetSubId,
         file_url: uploadResult.fileUrl,
         file_path: uploadResult.filePath,
-        file_size: uploadResult.fileSize
+        file_size: uploadResult.fileSize,
+        original_filename: originalFilename
       });
 
       return res.status(201).json(created);
@@ -278,14 +287,17 @@ router.put('/:id', authMiddleware, (req, res) => {
       let fileUrl = existing.file_url;
       let filePath = existing.file_path;
       let fileSize = existing.file_size;
+      let originalFilename = existing.original_filename;
 
       if (req.file) {
         if (!verifyPdfMagicBytes(req.file.buffer)) {
           return res.status(400).json({ error: 'Corrupt or invalid PDF file format' });
         }
 
+        originalFilename = req.file.originalname || `${newTitle}.pdf`;
+
         // Upload new file to Supabase Storage bucket 'pdfs'
-        const uploadResult = await storageService.uploadPdf(req.file.buffer, req.file.originalname);
+        const uploadResult = await storageService.uploadPdf(req.file.buffer, originalFilename);
 
         // Delete old file from storage
         await storageService.deletePdf(existing.file_path || existing.file_url);
@@ -304,7 +316,8 @@ router.put('/:id', authMiddleware, (req, res) => {
         subsection_id: newSubId,
         file_url: fileUrl,
         file_path: filePath,
-        file_size: fileSize
+        file_size: fileSize,
+        original_filename: originalFilename
       });
 
       return res.json(updated);

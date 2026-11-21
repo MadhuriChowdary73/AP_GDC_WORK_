@@ -463,7 +463,8 @@ const Viewer = {
       filtered = this.currentDocuments.filter(doc => {
         const titleMatch = (doc.title || '').toLowerCase().includes(this.tableSearchQuery);
         const descMatch = (doc.description || '').toLowerCase().includes(this.tableSearchQuery);
-        return titleMatch || descMatch;
+        const fileMatch = (doc.original_filename || '').toLowerCase().includes(this.tableSearchQuery);
+        return titleMatch || descMatch || fileMatch;
       });
     }
 
@@ -503,6 +504,7 @@ const Viewer = {
           <div class="doc-cell-title">${this.highlightMatch(this.escapeHtml(doc.title), this.tableSearchQuery)}</div>
           <div class="doc-cell-meta">
             <span class="file-type-badge">PDF</span>
+            ${doc.original_filename && doc.original_filename !== doc.title ? `<span class="doc-original-filename" title="Original filename">${this.escapeHtml(doc.original_filename)}</span><span>·</span>` : ''}
             <span>${formattedSize}</span>
             <span>·</span>
             <span>${formattedDate}</span>
@@ -520,7 +522,7 @@ const Viewer = {
           </button>
         </td>
         <td class="cell-action col-download">
-          <a href="${downloadUrl}" class="btn-action-icon btn-download-doc" download title="Download" aria-label="Download">
+          <a href="${downloadUrl}" class="btn-action-icon btn-download-doc" download="${this.escapeHtml(doc.original_filename || doc.title || 'document.pdf')}" title="Download" aria-label="Download">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
               <polyline points="7 10 12 15 17 10"/>
@@ -532,7 +534,7 @@ const Viewer = {
 
       // Preview button opens modal preview
       tr.querySelector('.btn-preview-doc').addEventListener('click', () => {
-        App.openPdfModal(viewUrl, doc.title, downloadUrl);
+        App.openPdfModal(viewUrl, doc.title, downloadUrl, doc.original_filename || doc.title);
       });
 
       tbody.appendChild(tr);

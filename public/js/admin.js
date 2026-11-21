@@ -236,6 +236,7 @@ const Admin = {
         tr.innerHTML = `
           <td>
             <div class="table-doc-title">${Viewer.escapeHtml(doc.title)}</div>
+            ${doc.original_filename && doc.original_filename !== doc.title ? `<div class="text-xs text-muted" style="margin-top: 2px;">File: ${Viewer.escapeHtml(doc.original_filename)}</div>` : ''}
             ${doc.description ? `<div class="table-doc-desc">${Viewer.escapeHtml(doc.description)}</div>` : ''}
           </td>
           <td>
@@ -264,7 +265,7 @@ const Admin = {
 
         // Attach action handlers
         tr.querySelector('.btn-table-view').addEventListener('click', () => {
-          App.openPdfModal(API.getViewUrl(doc.id), doc.title, API.getDownloadUrl(doc.id));
+          App.openPdfModal(API.getViewUrl(doc.id), doc.title, API.getDownloadUrl(doc.id), doc.original_filename || doc.title);
         });
 
         tr.querySelector('.btn-table-edit').addEventListener('click', () => {
