@@ -35,9 +35,9 @@ const StorageService = {
           upsert: false
         });
 
-      if (error) {
-        throw new Error(`Supabase Storage upload failed: ${error.message}`);
-      }
+            if (error) {
+                throw new Error(`Supabase Storage upload failed: ${error.message}`);
+            }
 
       // Retrieve public URL
       const { data: urlData } = supabase.storage
@@ -71,39 +71,39 @@ const StorageService = {
     };
   },
 
-  /**
-   * Delete a PDF from Supabase Storage bucket ('pdfs')
-   * @param {string} filePathOrUrl
-   */
-  async deletePdf(filePathOrUrl) {
-    if (!filePathOrUrl) return;
+    /**
+     * Delete a PDF from Supabase Storage bucket ('pdfs')
+     * @param {string} filePathOrUrl
+     */
+    async deletePdf(filePathOrUrl) {
+        if (!filePathOrUrl) return;
 
-    if (isConfigured && supabase) {
-      try {
-        let filename = filePathOrUrl;
-        if (filePathOrUrl.startsWith('http://') || filePathOrUrl.startsWith('https://')) {
-          const urlParts = filePathOrUrl.split('/');
-          filename = urlParts[urlParts.length - 1].split('?')[0];
+        if (isConfigured && supabase) {
+            try {
+                let filename = filePathOrUrl;
+                if (filePathOrUrl.startsWith('http://') || filePathOrUrl.startsWith('https://')) {
+                    const urlParts = filePathOrUrl.split('/');
+                    filename = urlParts[urlParts.length - 1].split('?')[0];
+                }
+                await supabase.storage.from(supabaseBucket).remove([filename]);
+            } catch (err) {
+                console.warn('Could not remove file from Supabase Storage:', err.message);
+            }
+            return;
         }
-        await supabase.storage.from(supabaseBucket).remove([filename]);
-      } catch (err) {
-        console.warn('Could not remove file from Supabase Storage:', err.message);
-      }
-      return;
-    }
 
-    // Local disk deletion fallback for offline tests
-    try {
-      const fullPath = path.isAbsolute(filePathOrUrl) 
-        ? filePathOrUrl 
-        : path.join(__dirname, '..', filePathOrUrl);
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-      }
-    } catch (err) {
-      console.warn('Could not remove local fallback file:', err.message);
+        // Local disk deletion fallback for offline tests
+        try {
+            const fullPath = path.isAbsolute(filePathOrUrl)
+                ? filePathOrUrl
+                : path.join(__dirname, '..', filePathOrUrl);
+            if (fs.existsSync(fullPath)) {
+                fs.unlinkSync(fullPath);
+            }
+        } catch (err) {
+            console.warn('Could not remove local fallback file:', err.message);
+        }
     }
-  }
 };
 
 module.exports = StorageService;
